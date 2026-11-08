@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -153,6 +155,8 @@ class DouyinClient:
         self.headless = headless
         self._pw = None
         self._ctx = None
+        self._install_task: asyncio.Task | None = None
+        self._install_error = ""
         self.lock = asyncio.Lock()  # 同一时间只做一件事
         self.self_uid: str = ""
         self.self_sec_uid: str = ""
@@ -162,27 +166,99 @@ class DouyinClient:
     async def start(self):
         if self._ctx:
             return
+        if self._install_task and not self._install_task.done():
+            raise DouyinError(
+                "正在自动下载浏览器（第一次使用需要 1~5 分钟），请稍后再试"
+            )
         try:
             from playwright.async_api import async_playwright
         except ImportError as e:
             raise DouyinError(
-                "未安装 playwright，请执行: pip install playwright && playwright install chromium"
+                "未安装 playwright，请在 AstrBot 所在环境执行: pip install playwright"
             ) from e
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self._pw = await async_playwright().start()
-        self._ctx = await self._pw.chromium.launch_persistent_context(
-            str(self.profile_dir),
-            headless=self.headless,
-            viewport={"width": 1366, "height": 860},
-            locale="zh-CN",
-            timezone_id="Asia/Shanghai",
-            **(
-                {"executable_path": self.executable_path}
-                if self.executable_path
-                else {}
-            ),
-        )
+        try:
+            self._ctx = await self._pw.chromium.launch_persistent_context(
+                str(self.profile_dir),
+                headless=self.headless,
+                viewport={"width": 1366, "height": 860},
+                locale="zh-CN",
+                timezone_id="Asia/Shanghai",
+                **(
+                    {"executable_path": self.executable_path}
+                    if self.executable_path
+                    else {}
+                ),
+            )
+        except Exception as e:
+            await self._pw.stop()
+            self._pw = None
+            msg = str(e)
+            missing_browser = "Executable doesn't exist" in msg
+            missing_deps = (
+                "missing dependencies" in msg
+                or "error while loading shared libraries" in msg
+            )
+            if self.executable_path or not (missing_browser or missing_deps):
+                raise
+            if self._install_task is None:
+                # First failure: download the browser in the background
+                self._install_task = asyncio.get_running_loop().create_task(
+                    self._install_browser(with_deps=missing_deps)
+                )
+                raise DouyinError(
+                    "第一次使用，正在自动下载浏览器（约 1~5 分钟），请稍后再试"
+                ) from e
+            raise DouyinError(
+                f"自动安装浏览器失败：{self._install_error or msg.splitlines()[0]}。"
+                "请在 AstrBot 所在环境手动执行: python -m playwright install --with-deps chromium，然后重载插件"
+            ) from e
         logger.info("[douyin] 浏览器已启动")
+
+    async def _install_browser(self, with_deps: bool):
+        """Run `playwright install chromium`, falling back to a China mirror."""
+
+        async def run(*args: str, env: dict | None = None) -> tuple[int, str]:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "playwright",
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env={**os.environ, **(env or {})},
+            )
+            out, _ = await proc.communicate()
+            return proc.returncode, out.decode(errors="ignore")[-500:]
+
+        logger.info("[douyin] 正在下载 Chromium 浏览器…")
+        if with_deps:
+            code, out = await run("install-deps", "chromium")
+            if code != 0:
+                logger.warning(f"[douyin] 安装系统依赖失败: {out}")
+        code, out = await run("install", "chromium")
+        if code != 0:
+            logger.warning(f"[douyin] 官方源下载失败，改用国内镜像: {out}")
+            code, out = await run(
+                "install",
+                "chromium",
+                env={
+                    "PLAYWRIGHT_DOWNLOAD_HOST": "https://npmmirror.com/mirrors/playwright"
+                },
+            )
+        if code == 0:
+            logger.info("[douyin] 浏览器下载完成")
+            self._install_task = (
+                None  # allow a fresh launch (and another try if needed)
+            )
+            self._install_error = ""
+        else:
+            # Pick the most useful line, e.g. "Error: Failed to download ..."
+            lines = [x.strip() for x in out.splitlines() if x.strip()]
+            errs = [x for x in lines if "Error" in x and not x.startswith("at ")]
+            self._install_error = (errs or lines or ["未知错误"])[0][:200]
+            logger.error(f"[douyin] 浏览器下载失败: {out}")
 
     async def close(self):
         try:

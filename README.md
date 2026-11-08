@@ -11,17 +11,13 @@
 ## 安装
 
 1. 把本目录放到 `AstrBot/data/plugins/` 下（或在 WebUI 里通过仓库地址安装）。
-2. 安装浏览器（只需一次）：
+2. 浏览器会在第一次使用时**自动下载**（约 1~5 分钟，下载慢时会自动换国内镜像），期间页面会提示“正在自动下载浏览器”，稍等后刷新即可。
+
+   如果自动下载失败，可以在 AstrBot 所在环境手动执行（Docker 部署要先进入容器）：
 
 ```bash
-pip install playwright
+python -m playwright install --with-deps chromium
 ```
-
-```bash
-playwright install --with-deps chromium
-```
-
-Docker 部署的 AstrBot 需要进入容器内执行上面的命令。
 
 3. 在 WebUI → 插件 → 抖音 AI 助手 → 配置里，设置人设、使用的模型等。
 
