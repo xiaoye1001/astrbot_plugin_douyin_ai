@@ -2,6 +2,12 @@
 
 本项目的所有重要变更都记录在这里。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.3] - 2026-11-08
+
+### 改进
+- 按插件市场审核建议，加固一键更新：AstrBot 目前没有公开的插件更新接口，插件会先检查 AstrBot 是否还提供所需的更新方法；没有或参数变了时，管理页面改为提示“到 AstrBot 的插件页面点更新”，不再点了才报错。
+- 新增与 AstrBot 源码对照的接口检查测试，GitHub 每周用最新版 AstrBot 自动跑一次，接口一旦变化会提前发现。
+
 ## [0.4.2] - 2026-11-08
 
 ### 改进
@@ -75,6 +81,7 @@
 - 人工审核模式、每日上限、发言间隔、活跃时间段。
 - `/dy` 系列管理指令。
 
+[0.4.3]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.3
 [0.4.2]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.2
 [0.4.1]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.1
 [0.4.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.0

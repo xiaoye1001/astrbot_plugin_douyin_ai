@@ -280,7 +280,14 @@ function renderUpdate() {
     b.disabled = updating;
     b.textContent = updating ? "更新中…" : "立即更新";
   }
-  $("btn-update-run").classList.toggle("hidden", !u.has_update);
+  // Without AstrBot's update method, point to the WebUI plugin page instead
+  const canSelfUpdate = u.self_update !== false;
+  $("btn-update-run").classList.toggle("hidden", !u.has_update || !canSelfUpdate);
+  $("btn-update-banner").classList.toggle("hidden", !canSelfUpdate);
+  if (u.has_update && !canSelfUpdate && !updating) {
+    $("update-banner-text").textContent =
+      `🆕 发现新版本 v${u.latest}，请到 AstrBot 的「插件」页面点「更新」`;
+  }
   $("btn-update-check").disabled = checking || updating;
 
   const st = $("u-status");

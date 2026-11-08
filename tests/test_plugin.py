@@ -338,3 +338,36 @@ async def test_cookie_command_refused_in_group_chat(plugin):
 
     out = [r async for r in plugin.cmd_cookie(GroupEvent())]
     assert "不要在群里发" in out[0]
+
+
+def test_astrbot_still_offers_update_plugin():
+    """Contract check against the real AstrBot source (CI runs it weekly on the
+    latest AstrBot): self-update relies on Context._star_manager.update_plugin."""
+    import inspect
+
+    from astrbot.core.star.context import Context
+    from astrbot.core.star.star_manager import PluginManager
+
+    assert hasattr(Context, "_star_manager")
+    params = inspect.signature(PluginManager.update_plugin).parameters
+    assert "plugin_name" in params and "proxy" in params
+
+
+async def test_update_button_hidden_without_plugin_manager(plugin):
+    plugin.context._star_manager = None
+    status, state = await call_web(plugin.web_state)
+    assert state["update"]["self_update"] is False
+    with pytest.raises(Exception, match="插件」页面"):
+        await plugin.run_update()
+
+
+async def test_update_signature_change_gives_manual_hint(plugin):
+    class ChangedManager:
+        async def update_plugin(self, name, *, source):  # incompatible signature
+            pass
+
+    plugin.context._star_manager = ChangedManager()
+    plugin._update.update(has_update=True, latest="9.9.9")
+    with pytest.raises(Exception, match="插件」页面"):
+        await plugin.run_update()
+    assert "插件」页面" in plugin._update["msg"]

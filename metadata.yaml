@@ -2,7 +2,7 @@ name: astrbot_plugin_douyin_ai
 display_name: 抖音 AI 助手
 short_desc: AI 自动刷抖音、评论、回复评论
 desc: 让 AI 登录你的抖音账号，自动刷推荐视频、按人设发表评论、回复自己作品下的评论。支持人工审核、频率限制、可视化管理页面和一键更新。
-version: 0.4.2
+version: 0.4.3
 author: xiaoye1001
 repo: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai
 astrbot_version: ">=4.29.0"

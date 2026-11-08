@@ -19,6 +19,9 @@ from .core.store import Store
 from .core.utils import clean_output, in_active_hours, parse_json
 
 PLUGIN_NAME = "astrbot_plugin_douyin_ai"
+MANUAL_UPDATE_HINT = (
+    "当前 AstrBot 版本不支持插件内一键更新，请到 AstrBot 的「插件」页面点「更新」"
+)
 
 
 class DouyinAIPlugin(Star):
@@ -500,11 +503,22 @@ class DouyinAIPlugin(Star):
         m = str(self.config.get("github_mirror", updater.DOWNLOAD_MIRROR) or "").strip()
         return m if m.startswith("https://") else ""
 
+    def _plugin_manager(self):
+        """AstrBot's plugin manager, if it still offers update_plugin().
+
+        AstrBot has no public self-update API yet; this is the same method the
+        WebUI "更新" button uses. Checked up front so a future AstrBot change
+        just hides the button instead of failing (tests/test_plugin.py also
+        checks the signature against the real AstrBot source).
+        """
+        manager = getattr(self.context, "_star_manager", None)
+        return manager if callable(getattr(manager, "update_plugin", None)) else None
+
     async def run_update(self):
         """Download the latest version and reload the plugin via AstrBot."""
-        manager = getattr(self.context, "_star_manager", None)
+        manager = self._plugin_manager()
         if manager is None:
-            raise DouyinError("当前 AstrBot 版本不支持插件自更新，请在插件页面手动更新")
+            raise DouyinError(MANUAL_UPDATE_HINT)
         target = self._update.get("latest") or "最新版"
         self._update.update(status="updating", msg=f"正在下载 v{target}…")
         self.event_log(f"⬇️ 开始更新到 v{target}")
@@ -518,6 +532,10 @@ class DouyinAIPlugin(Star):
                 logger.warning(f"[douyin] 直接下载失败，改用加速镜像 {mirror}: {e}")
                 self._update["msg"] = "直连 GitHub 失败，正在通过镜像下载…"
                 await manager.update_plugin(PLUGIN_NAME, proxy=mirror)
+        except TypeError as e:  # update_plugin()'s signature changed in AstrBot
+            logger.warning(f"[douyin] update_plugin 调用失败: {e}")
+            self._update.update(status="error", msg=MANUAL_UPDATE_HINT)
+            raise DouyinError(MANUAL_UPDATE_HINT) from e
         except Exception as e:
             self._update.update(status="error", msg=f"更新失败：{e}")
             await self.notify(f"❌ 插件更新失败：{e}")
@@ -550,7 +568,7 @@ class DouyinAIPlugin(Star):
         b, r = self.config.get("browse", {}), self.config.get("reply", {})
         return json_response(
             {
-                "update": self._update,
+                "update": {**self._update, "self_update": bool(self._plugin_manager())},
                 "logged_in": logged,
                 "nickname": self.client.self_nickname,
                 "running": self.loop_running,
