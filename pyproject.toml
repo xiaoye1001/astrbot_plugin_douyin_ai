@@ -2,7 +2,7 @@
 # runtime dependencies live in requirements.txt.
 [project]
 name = "astrbot_plugin_douyin_ai"
-version = "0.3.1"
+version = "0.4.0"
 description = "AstrBot 插件：让 AI 自动刷抖音、评论、回复评论"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,6 +23,7 @@ ignore = [
   "E501",   # long Chinese strings are fine
   "B008",
   "SIM105", # explicit try/except/pass reads clearer here
+  "ASYNC230", "ASYNC240", # small local file writes during downloads are fine
 ]
 
 [tool.ruff.lint.isort]

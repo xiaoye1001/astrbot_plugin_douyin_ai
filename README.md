@@ -36,12 +36,16 @@
    ```
 
 2. 安装完成后，左侧菜单会出现「**抖音 AI 管理**」。
-3. 浏览器（Chromium）会在第一次使用时**自动下载**，大约需要 1~5 分钟，下载慢时会自动改用国内镜像。
+3. 浏览器不用手动装：插件会**直接使用电脑上已有的 Chrome / Edge / Chromium**；没有的话会自动从**国内镜像**下载（Docker / Linux 下还会用系统软件源安装），第一次大约需要几分钟。
 
 <details>
-<summary>自动下载浏览器失败怎么办？</summary>
+<summary>自动准备浏览器失败怎么办？</summary>
 
-在 AstrBot 所在环境手动执行下面的命令，然后重载插件（Docker 部署要先进入容器，例如 `docker exec -it astrbot bash`）：
+任选一种办法，然后重载插件：
+
+- 在 AstrBot 所在的机器上安装 Chrome 或 Edge 浏览器（Docker 部署可以进入容器执行 `apt-get update && apt-get install -y chromium`）。
+- 在插件配置「浏览器可执行文件路径」里填写浏览器路径，例如 `C:\Program Files\Google\Chrome\Application\chrome.exe` 或 `/usr/bin/chromium`。
+- 手动执行：
 
 ```bash
 python -m playwright install --with-deps chromium
@@ -127,6 +131,7 @@ astrbot_plugin_douyin_ai/
 ├── logo.png               # 插件图标
 ├── core/
 │   ├── douyin_client.py   # 浏览器自动化（Playwright）
+│   ├── browser.py         # 查找 / 自动安装浏览器
 │   ├── store.py           # 本地状态：待审核、去重、每日计数
 │   ├── updater.py         # 检查新版本
 │   ├── prompts.py         # 给大模型的提示词

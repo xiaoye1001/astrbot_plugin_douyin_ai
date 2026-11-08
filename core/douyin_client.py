@@ -12,9 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import random
-import sys
+import shutil
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -22,6 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
+
+from . import browser
 
 DOUYIN_HOME = "https://www.douyin.com/"
 VIDEO_URL = "https://www.douyin.com/video/{aweme_id}"
@@ -157,19 +158,57 @@ class DouyinClient:
         self._ctx = None
         self._install_task: asyncio.Task | None = None
         self._install_error = ""
+        self.install_status = ""
+        self._last_fail = ""
+        self._last_fail_at = 0.0
+        self._browser_cache = self.data_dir / "browser.json"
         self.lock = asyncio.Lock()  # 同一时间只做一件事
         self.self_uid: str = ""
         self.self_sec_uid: str = ""
         self.self_nickname: str = ""
 
     # ------------------------------------------------------------------ 生命周期
+    # ------------------------------------------------------------------ 浏览器
+    def _candidates(self) -> list[str | None]:
+        """Browsers to try: last one that worked, Playwright's own, system ones."""
+        cached = ""
+        try:
+            cached = json.loads(self._browser_cache.read_text("utf-8")).get("path", "")
+        except (OSError, ValueError):
+            pass
+        found: list[str | None] = []
+        if cached and Path(cached).is_file():
+            found.append(cached)
+        found.append(None)  # None = Playwright's bundled browser
+        found += browser.system_browsers()
+        return list(dict.fromkeys(found))
+
+    def _remember(self, exe: str | None):
+        if exe:
+            self._browser_cache.parent.mkdir(parents=True, exist_ok=True)
+            self._browser_cache.write_text(json.dumps({"path": exe}), "utf-8")
+
+    async def _launch(self, exe: str | None):
+        return await self._pw.chromium.launch_persistent_context(
+            str(self.profile_dir),
+            headless=self.headless,
+            viewport={"width": 1366, "height": 860},
+            locale="zh-CN",
+            timezone_id="Asia/Shanghai",
+            timeout=30000,
+            **({"executable_path": exe} if exe else {}),
+        )
+
     async def start(self):
         if self._ctx:
             return
         if self._install_task and not self._install_task.done():
             raise DouyinError(
-                "正在自动下载浏览器（第一次使用需要 1~5 分钟），请稍后再试"
+                f"正在自动准备浏览器：{self.install_status}（第一次使用需要几分钟），请稍后再试"
             )
+        # Don't retry every few seconds while the page is polling
+        if self._last_fail and time.time() - self._last_fail_at < 30:
+            raise DouyinError(self._last_fail)
         try:
             from playwright.async_api import async_playwright
         except ImportError as e:
@@ -178,87 +217,115 @@ class DouyinClient:
             ) from e
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self._pw = await async_playwright().start()
-        try:
-            self._ctx = await self._pw.chromium.launch_persistent_context(
-                str(self.profile_dir),
-                headless=self.headless,
-                viewport={"width": 1366, "height": 860},
-                locale="zh-CN",
-                timezone_id="Asia/Shanghai",
-                **(
-                    {"executable_path": self.executable_path}
-                    if self.executable_path
-                    else {}
-                ),
+        candidates = (
+            [self.executable_path] if self.executable_path else self._candidates()
+        )
+        errors = []
+        for exe in candidates:
+            try:
+                self._ctx = await self._launch(exe)
+            except Exception as e:
+                first = (str(e).splitlines() or [type(e).__name__])[0][:160]
+                errors.append(f"{exe or 'Playwright 自带浏览器'}：{first}")
+                continue
+            self._remember(exe)
+            self._last_fail = ""
+            logger.info(f"[douyin] 浏览器已启动：{exe or 'Playwright 自带浏览器'}")
+            return
+        await self._pw.stop()
+        self._pw = None
+        logger.info("[douyin] 没有可用的浏览器：" + " | ".join(errors))
+        if self.executable_path:
+            msg = f"插件配置里填写的浏览器无法启动：{errors[0]}"
+        elif self._install_task is None:
+            self._install_task = asyncio.get_running_loop().create_task(
+                self._prepare_browser()
             )
-        except Exception as e:
-            await self._pw.stop()
-            self._pw = None
-            msg = str(e)
-            missing_browser = "Executable doesn't exist" in msg
-            missing_deps = (
-                "missing dependencies" in msg
-                or "error while loading shared libraries" in msg
-            )
-            if self.executable_path or not (missing_browser or missing_deps):
-                raise
-            if self._install_task is None:
-                # First failure: download the browser in the background
-                self._install_task = asyncio.get_running_loop().create_task(
-                    self._install_browser(with_deps=missing_deps)
-                )
-                raise DouyinError(
-                    "第一次使用，正在自动下载浏览器（约 1~5 分钟），请稍后再试"
-                ) from e
             raise DouyinError(
-                f"自动安装浏览器失败：{self._install_error or msg.splitlines()[0]}。"
-                "请在 AstrBot 所在环境手动执行: python -m playwright install --with-deps chromium，然后重载插件"
-            ) from e
-        logger.info("[douyin] 浏览器已启动")
-
-    async def _install_browser(self, with_deps: bool):
-        """Run `playwright install chromium`, falling back to a China mirror."""
-
-        async def run(*args: str, env: dict | None = None) -> tuple[int, str]:
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-m",
-                "playwright",
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env={**os.environ, **(env or {})},
+                "没有找到可用的浏览器，正在自动下载（第一次使用需要几分钟），请稍后再试"
             )
-            out, _ = await proc.communicate()
-            return proc.returncode, out.decode(errors="ignore")[-500:]
-
-        logger.info("[douyin] 正在下载 Chromium 浏览器…")
-        if with_deps:
-            code, out = await run("install-deps", "chromium")
-            if code != 0:
-                logger.warning(f"[douyin] 安装系统依赖失败: {out}")
-        code, out = await run("install", "chromium")
-        if code != 0:
-            logger.warning(f"[douyin] 官方源下载失败，改用国内镜像: {out}")
-            code, out = await run(
-                "install",
-                "chromium",
-                env={
-                    "PLAYWRIGHT_DOWNLOAD_HOST": "https://npmmirror.com/mirrors/playwright"
-                },
-            )
-        if code == 0:
-            logger.info("[douyin] 浏览器下载完成")
-            self._install_task = (
-                None  # allow a fresh launch (and another try if needed)
-            )
-            self._install_error = ""
         else:
-            # Pick the most useful line, e.g. "Error: Failed to download ..."
-            lines = [x.strip() for x in out.splitlines() if x.strip()]
-            errs = [x for x in lines if "Error" in x and not x.startswith("at ")]
-            self._install_error = (errs or lines or ["未知错误"])[0][:200]
-            logger.error(f"[douyin] 浏览器下载失败: {out}")
+            msg = (
+                f"自动准备浏览器失败（{self._install_error}）。可以任选一种办法后重载插件："
+                "① 在这台机器上安装 Chrome 或 Edge 浏览器；"
+                "② 在插件配置「浏览器可执行文件路径」里填写浏览器路径；"
+                "③ 手动执行 python -m playwright install --with-deps chromium"
+            )
+        self._last_fail, self._last_fail_at = msg, time.time()
+        raise DouyinError(msg)
+
+    def _set_status(self, text: str):
+        self.install_status = text
+        logger.info(f"[douyin] {text}")
+
+    async def _probe(self, exe: str | None) -> str:
+        """Try to launch a browser once. Returns '' on success, else the error."""
+        from playwright.async_api import async_playwright
+
+        pw = await async_playwright().start()
+        try:
+            b = await pw.chromium.launch(
+                headless=True,
+                timeout=30000,
+                **({"executable_path": exe} if exe else {}),
+            )
+            await b.close()
+            return ""
+        except Exception as e:
+            return (str(e).splitlines() or [type(e).__name__])[0][:200]
+        finally:
+            await pw.stop()
+
+    async def _prepare_browser(self):
+        """Get a working browser: mirror download, apt, then Playwright's installer."""
+        steps = []
+        if browser.cft_platform():
+            steps.append(
+                (
+                    "国内镜像",
+                    lambda: browser.download_cft(
+                        self.data_dir / "browser", self.headless, self._set_status
+                    ),
+                )
+            )
+        if browser.can_use_apt():
+
+            async def apt_chromium():
+                await browser.apt_install(["chromium"], self._set_status)
+                return shutil.which("chromium") or shutil.which("chromium-browser")
+
+            steps.append(("系统软件源", apt_chromium))
+
+        async def pw_install():
+            await browser.playwright_install(self._set_status)
+            return None
+
+        steps.append(("Playwright", pw_install))
+
+        errors = []
+        for name, step in steps:
+            try:
+                exe = await step()
+                err = await self._probe(exe)
+                missing_libs = (
+                    "shared libraries" in err or "missing dependencies" in err
+                )
+                if err and missing_libs and browser.can_use_apt():
+                    await browser.install_playwright_deps(self._set_status)
+                    err = await self._probe(exe)
+                if not err:
+                    self._remember(exe)
+                    self._set_status("浏览器已准备好")
+                    self._install_error = ""
+                    self._last_fail = ""
+                    self._install_task = None  # next start() launches it
+                    return
+                errors.append(f"{name}：{err}")
+            except Exception as e:
+                errors.append(f"{name}：{e}")
+            logger.warning(f"[douyin] {errors[-1]}")
+        self._install_error = "；".join(errors)[:600]
+        self._set_status("自动准备浏览器失败")
 
     async def close(self):
         try:

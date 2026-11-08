@@ -2,6 +2,17 @@
 
 本项目的所有重要变更都记录在这里。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-11-08
+
+### 变更
+- 浏览器不再依赖 Playwright 官方下载，按顺序自动尝试：
+  1. 直接使用电脑上已有的 Chrome / Edge / Chromium（不用下载）；
+  2. 从国内镜像（npmmirror）下载 Chrome；
+  3. Linux / Docker 下用系统软件源安装 Chromium 和它需要的系统组件；
+  4. 最后才用 Playwright 官方源。
+- 成功启动过的浏览器会被记住，重启 AstrBot 后不再重复查找和下载。
+- 全部失败时给出清楚的中文提示和三种解决办法。
+
 ## [0.3.1] - 2026-11-08
 
 ### 修复
@@ -39,6 +50,7 @@
 - 人工审核模式、每日上限、发言间隔、活跃时间段。
 - `/dy` 系列管理指令。
 
+[0.4.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.0
 [0.3.1]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.3.1
 [0.3.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/commit/0e09bb0
 [0.2.1]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/commit/c29c1d0

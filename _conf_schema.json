@@ -134,7 +134,7 @@
     "description": "浏览器可执行文件路径（可选）",
     "type": "string",
     "default": "",
-    "hint": "留空使用 playwright install chromium 安装的浏览器；也可以填本机 Chrome 的路径"
+    "hint": "一般留空：插件会自动使用电脑上已有的 Chrome / Edge / Chromium，没有时自动从国内镜像下载。只有自动方式都失败时才需要填写，例如 C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe 或 /usr/bin/chromium"
   },
   "selectors": {
     "description": "页面选择器（高级）",
