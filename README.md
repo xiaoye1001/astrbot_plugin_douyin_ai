@@ -167,13 +167,8 @@ ruff check . && ruff format --check .
 
 1. 修改 `metadata.yaml` 和 `pyproject.toml` 里的 `version`，在 `CHANGELOG.md` 顶部写上这个版本的变化。
 2. 提交并推送到 `main`。
-3. 打标签并推送，GitHub Actions 会自动创建 Release：
 
-```bash
-git tag v0.3.1 && git push origin v0.3.1
-```
-
-推送到 `main` 后，已安装插件的用户就能在管理页面看到更新提示。
+GitHub Actions 会自动打上 `vX.Y.Z` 标签并创建 Release（附带插件压缩包），已安装插件的用户也会在管理页面看到更新提示。
 
 ## 许可证
 

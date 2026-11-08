@@ -39,8 +39,8 @@
 - 人工审核模式、每日上限、发言间隔、活跃时间段。
 - `/dy` 系列管理指令。
 
-[0.3.1]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/compare/v0.2.1...v0.3.0
-[0.2.1]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.1.0
+[0.3.1]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.3.1
+[0.3.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/commit/0e09bb0
+[0.2.1]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/commit/c29c1d0
+[0.2.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/commit/95b5c2e
+[0.1.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/commit/8e7a09b

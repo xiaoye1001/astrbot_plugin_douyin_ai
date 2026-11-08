@@ -1,8 +1,12 @@
 name: Release
 
+# Bump `version` in metadata.yaml (and add a CHANGELOG.md entry), push to main,
+# and this creates the vX.Y.Z tag plus a GitHub Release automatically.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: [metadata.yaml, .github/workflows/release.yml]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,25 +16,44 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check tag matches metadata.yaml
+      - name: Read version
+        id: v
         run: |
-          version=$(sed -n 's/^version: *//p' metadata.yaml)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match metadata.yaml version $version"
-            exit 1
+          version=$(sed -n 's/^version: *//p' metadata.yaml | tr -d "\"'")
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Skip if already released
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.v.outputs.tag }}" > /dev/null 2>&1; then
+            echo "Release ${{ steps.v.outputs.tag }} already exists"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Extract release notes from CHANGELOG.md
+        if: steps.exists.outputs.skip != 'true'
         run: |
-          v="${GITHUB_REF_NAME#v}"
-          awk -v v="$v" '
+          awk -v v="${{ steps.v.outputs.version }}" '
             /^## \[/ { if (found) exit; if (index($0, "[" v "]")) { found=1; next } }
             /^\[[0-9]/ { next }
             found { print }
           ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no entry for ${{ steps.v.outputs.version }}"
+            exit 1
+          fi
           cat notes.md
       - name: Build plugin zip
-        run: git archive --format=zip --prefix=astrbot_plugin_douyin_ai/ -o astrbot_plugin_douyin_ai-${GITHUB_REF_NAME}.zip HEAD
-      - name: Create GitHub release
+        if: steps.exists.outputs.skip != 'true'
+        run: git archive --format=zip --prefix=astrbot_plugin_douyin_ai/ -o "astrbot_plugin_douyin_ai-${{ steps.v.outputs.tag }}.zip" HEAD
+      - name: Create tag and GitHub release
+        if: steps.exists.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md astrbot_plugin_douyin_ai-*.zip
+        run: |
+          gh release create "${{ steps.v.outputs.tag }}" \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.v.outputs.tag }}" \
+            --notes-file notes.md \
+            astrbot_plugin_douyin_ai-*.zip
