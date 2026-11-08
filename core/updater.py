@@ -6,6 +6,7 @@ The actual download / replace / reload is done by AstrBot's own plugin updater
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -110,3 +111,81 @@ async def check_latest(mirror: str = DOWNLOAD_MIRROR) -> dict:
         "astrbot_version": remote.get("astrbot_version", ""),
         "repo": local.get("repo", ""),
     }
+
+
+# ---------------------------------------------------------------- AstrBot OpenAPI
+class UpdateRefused(RuntimeError):
+    """AstrBot declined the update (not a network problem): retrying via a mirror
+    won't help."""
+
+
+# AstrBot answers these when it doesn't know where the plugin was installed from
+_REFUSED_HINTS = ("安装源", "无法检测或执行更新")
+
+
+def dashboard_base_url(dashboard_cfg: dict) -> tuple[str, bool]:
+    """Local URL of this AstrBot's own HTTP API, resolved the same way AstrBot
+    picks its listen address (env vars first, then the dashboard config).
+
+    Returns:
+        (base_url, is_loopback)
+    """
+    cfg = dashboard_cfg or {}
+    port = (
+        os.environ.get("DASHBOARD_PORT")
+        or os.environ.get("ASTRBOT_DASHBOARD_PORT")
+        or cfg.get("port", 6185)
+    )
+    host = (
+        os.environ.get("DASHBOARD_HOST")
+        or os.environ.get("ASTRBOT_DASHBOARD_HOST")
+        or cfg.get("host", "0.0.0.0")
+    )
+    if host in ("", "0.0.0.0", "::", "[::]"):
+        host = "127.0.0.1"
+    ssl_env = os.environ.get("DASHBOARD_SSL_ENABLE") or os.environ.get(
+        "ASTRBOT_DASHBOARD_SSL_ENABLE"
+    )
+    ssl_cfg = cfg.get("ssl") if isinstance(cfg.get("ssl"), dict) else {}
+    ssl = (
+        ssl_env.strip().lower() in ("1", "true", "yes", "on")
+        if ssl_env
+        else bool(ssl_cfg.get("enable", False))
+    )
+    loopback = host in ("127.0.0.1", "localhost", "::1")
+    shown = f"[{host}]" if ":" in host else host
+    return f"{'https' if ssl else 'http'}://{shown}:{port}", loopback
+
+
+async def update_via_openapi(
+    base_url: str, api_key: str, plugin_name: str, proxy: str = "", verify=True
+) -> None:
+    """Update a plugin through AstrBot's public HTTP API
+    (POST /api/v1/plugins/{plugin_id}/update, API key with the `plugin` scope).
+
+    This is the same flow as the WebUI "更新" button: it uses the plugin market's
+    download info, then reloads the plugin. The response arrives after reload.
+    """
+    async with httpx.AsyncClient(timeout=900, verify=verify) as client:
+        resp = await client.post(
+            f"{base_url}/api/v1/plugins/{plugin_name}/update",
+            json={"proxy": proxy} if proxy else {},
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+    if resp.status_code in (401, 403):
+        raise PermissionError(
+            "AstrBot API Key 无效，或没有勾选 plugin 权限（在 AstrBot「设置 → OpenAPI」检查）"
+        )
+    try:
+        data = resp.json()
+    except ValueError:
+        data = {}
+    msg = str(data.get("message") or "")
+    if resp.status_code < 400 and data.get("status") in ("ok", "warning"):
+        return
+    if any(h in msg for h in _REFUSED_HINTS):
+        raise UpdateRefused(
+            f"{msg} 请到 AstrBot 的「插件」页面为本插件选择安装源（插件市场或仓库地址）后再试；"
+            "或清空插件配置里的 AstrBot API Key，改用内部方式更新。"
+        )
+    raise RuntimeError(msg or f"HTTP {resp.status_code}")

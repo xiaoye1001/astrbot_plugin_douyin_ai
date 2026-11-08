@@ -98,6 +98,7 @@ python -m playwright install --with-deps chromium
 - 在「关于与更新」里点「立即更新」，或发送 `/dy update`。连不上 GitHub 时会自动改用加速镜像。
 - 更新后插件自动重载，登录状态、设置和记录都会保留。
 - 也可以照常在 AstrBot 的插件页面点「更新」。
+- **推荐（可选）**：在 AstrBot「设置 → OpenAPI」创建一个只勾选 `plugin` 权限的 API Key，填到插件配置「AstrBot API Key」。之后一键更新会走 AstrBot 官方公开接口，和插件页面的「更新」按钮流程完全一致（使用插件市场的下载地址）。不填也能一键更新。
 
 每个版本的变化见 [CHANGELOG.md](CHANGELOG.md)。
 

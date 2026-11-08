@@ -371,3 +371,59 @@ async def test_update_signature_change_gives_manual_hint(plugin):
     with pytest.raises(Exception, match="插件」页面"):
         await plugin.run_update()
     assert "插件」页面" in plugin._update["msg"]
+
+
+async def test_update_prefers_public_api_when_key_set(plugin, monkeypatch):
+    calls = []
+
+    async def fake_api(base, key, name, proxy="", verify=True):
+        calls.append((base, key, name, proxy, verify))
+
+    class Manager:
+        async def update_plugin(self, name, proxy=""):
+            raise AssertionError("internal method must not be used")
+
+    monkeypatch.setattr(plugin_main.updater, "update_via_openapi", fake_api)
+    plugin.context._star_manager = Manager()
+    plugin.context.get_config = lambda umo=None: {"dashboard": {"port": 6185}}
+    plugin.config["astrbot_api_key"] = "abk_x"
+    plugin._update.update(has_update=True, latest="9.9.9")
+
+    status, state = await call_web(plugin.web_state)
+    assert state["update"]["via"] == "openapi" and state["update"]["self_update"]
+    await plugin.run_update()
+    # own AstrBot on loopback -> TLS verification off (its cert will not match 127.0.0.1)
+    assert calls == [
+        ("http://127.0.0.1:6185", "abk_x", "astrbot_plugin_douyin_ai", "", False)
+    ]
+
+
+async def test_wrong_api_key_does_not_retry_through_mirror(plugin, monkeypatch):
+    calls = []
+
+    async def denied(base, key, name, proxy="", verify=True):
+        calls.append(proxy)
+        raise PermissionError("AstrBot API Key 无效")
+
+    monkeypatch.setattr(plugin_main.updater, "update_via_openapi", denied)
+    plugin.context.get_config = lambda umo=None: {"dashboard": {}}
+    plugin.config["astrbot_api_key"] = "abk_bad"
+    with pytest.raises(PermissionError):
+        await plugin.run_update()
+    assert calls == [""]  # no pointless retry via the mirror
+    assert "API Key" in plugin._update["msg"]
+
+
+async def test_refused_update_is_not_retried_through_mirror(plugin, monkeypatch):
+    calls = []
+
+    async def refused(base, key, name, proxy="", verify=True):
+        calls.append(proxy)
+        raise plugin_main.updater.UpdateRefused("请先选择插件安装源后再更新。")
+
+    monkeypatch.setattr(plugin_main.updater, "update_via_openapi", refused)
+    plugin.context.get_config = lambda umo=None: {"dashboard": {}}
+    plugin.config["astrbot_api_key"] = "abk_x"
+    with pytest.raises(plugin_main.updater.UpdateRefused):
+        await plugin.run_update()
+    assert calls == [""]

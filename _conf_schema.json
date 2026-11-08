@@ -163,6 +163,13 @@
     "default": "https://ghfast.top",
     "hint": "连不上 GitHub 时，通过这个镜像检查和下载插件更新。镜像由第三方提供，理论上能篡改下载的代码；如果你的服务器能直连 GitHub，清空这一项会更安全。"
   },
+  "astrbot_api_key": {
+    "description": "AstrBot API Key（可选，用于一键更新）",
+    "type": "string",
+    "secret": true,
+    "default": "",
+    "hint": "填写后，一键更新改用 AstrBot 官方公开接口，流程和插件页面的「更新」按钮完全一样（会用插件市场的下载地址）。在 AstrBot「设置 → OpenAPI」创建，只勾选 plugin 权限即可。这个 Key 能安装和更新插件，请勿泄露。留空则使用 AstrBot 内部方法更新。"
+  },
   "selectors": {
     "description": "页面选择器（高级）",
     "type": "object",

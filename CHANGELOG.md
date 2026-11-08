@@ -2,6 +2,15 @@
 
 本项目的所有重要变更都记录在这里。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.4] - 2026-11-08
+
+### 新增
+- 一键更新支持 AstrBot 官方公开接口（`POST /api/v1/plugins/{plugin_id}/update`，v4.18.0 起提供）：在插件配置填写 AstrBot API Key（只需 `plugin` 权限）后，一键更新与 AstrBot 插件页面的「更新」按钮流程完全一致，会使用插件市场登记的下载地址，并遵循你为插件选择的安装来源。未填写时仍使用原来的方式，开箱即用。
+- 管理页面「关于与更新」显示当前使用的更新方式。
+
+### 改进
+- API Key 错误、或 AstrBot 提示需要先选择安装来源时，给出清楚的中文提示，不再无意义地通过镜像重试。
+
 ## [0.4.3] - 2026-11-08
 
 ### 改进
@@ -81,6 +90,7 @@
 - 人工审核模式、每日上限、发言间隔、活跃时间段。
 - `/dy` 系列管理指令。
 
+[0.4.4]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.4
 [0.4.3]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.3
 [0.4.2]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.2
 [0.4.1]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.1

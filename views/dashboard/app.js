@@ -292,9 +292,11 @@ function renderUpdate() {
 
   const st = $("u-status");
   st.className = "update-status" + (u.status === "error" ? " error" : updating || checking ? " busy" : "");
+  const via = u.via === "openapi" ? "更新方式：AstrBot 公开接口（API Key）" : "";
   st.textContent = u.msg
     ? u.msg + (u.checked_at && !updating && !checking ? `（检查于 ${fmtTime(u.checked_at)}）` : "")
     : u.checked_at ? `上次检查：${fmtTime(u.checked_at)}` : "";
+  if (via && !updating && !checking) st.textContent += `　${via}`;
 
   $("u-notes-wrap").classList.toggle("hidden", !(u.has_update && u.notes));
   $("u-notes").textContent = u.notes || "";

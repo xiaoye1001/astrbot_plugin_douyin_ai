@@ -20,7 +20,8 @@ from .core.utils import clean_output, in_active_hours, parse_json
 
 PLUGIN_NAME = "astrbot_plugin_douyin_ai"
 MANUAL_UPDATE_HINT = (
-    "当前 AstrBot 版本不支持插件内一键更新，请到 AstrBot 的「插件」页面点「更新」"
+    "当前 AstrBot 版本不支持插件内一键更新，请到 AstrBot 的「插件」页面点「更新」，"
+    "或在插件配置里填写 AstrBot API Key"
 )
 
 
@@ -514,10 +515,40 @@ class DouyinAIPlugin(Star):
         manager = getattr(self.context, "_star_manager", None)
         return manager if callable(getattr(manager, "update_plugin", None)) else None
 
-    async def run_update(self):
-        """Download the latest version and reload the plugin via AstrBot."""
+    def _api_key(self) -> str:
+        return str(self.config.get("astrbot_api_key", "") or "").strip()
+
+    def _update_fn(self):
+        """How to update: AstrBot's public HTTP API when an API key is set
+        (preferred, same flow as the WebUI button), else the internal method."""
+        if key := self._api_key():
+            base, loopback = updater.dashboard_base_url(
+                self.context.get_config().get("dashboard", {})
+            )
+
+            async def via_api(proxy: str = ""):
+                # Own AstrBot on loopback: its HTTPS cert won't match 127.0.0.1
+                await updater.update_via_openapi(
+                    base, key, PLUGIN_NAME, proxy, verify=not loopback
+                )
+
+            return via_api
         manager = self._plugin_manager()
         if manager is None:
+            return None
+
+        async def via_manager(proxy: str = ""):
+            if proxy:
+                await manager.update_plugin(PLUGIN_NAME, proxy=proxy)
+            else:
+                await manager.update_plugin(PLUGIN_NAME)
+
+        return via_manager
+
+    async def run_update(self):
+        """Download the latest version and reload the plugin via AstrBot."""
+        do_update = self._update_fn()
+        if do_update is None:
             raise DouyinError(MANUAL_UPDATE_HINT)
         target = self._update.get("latest") or "最新版"
         self._update.update(status="updating", msg=f"正在下载 v{target}…")
@@ -525,13 +556,15 @@ class DouyinAIPlugin(Star):
         mirror = self._mirror()
         try:
             try:
-                await manager.update_plugin(PLUGIN_NAME)
+                await do_update()
+            except (PermissionError, updater.UpdateRefused):
+                raise  # wrong key / AstrBot said no: a mirror won't help
             except Exception as e:
                 if not mirror:
                     raise
                 logger.warning(f"[douyin] 直接下载失败，改用加速镜像 {mirror}: {e}")
                 self._update["msg"] = "直连 GitHub 失败，正在通过镜像下载…"
-                await manager.update_plugin(PLUGIN_NAME, proxy=mirror)
+                await do_update(mirror)
         except TypeError as e:  # update_plugin()'s signature changed in AstrBot
             logger.warning(f"[douyin] update_plugin 调用失败: {e}")
             self._update.update(status="error", msg=MANUAL_UPDATE_HINT)
@@ -568,7 +601,11 @@ class DouyinAIPlugin(Star):
         b, r = self.config.get("browse", {}), self.config.get("reply", {})
         return json_response(
             {
-                "update": {**self._update, "self_update": bool(self._plugin_manager())},
+                "update": {
+                    **self._update,
+                    "self_update": bool(self._api_key() or self._plugin_manager()),
+                    "via": "openapi" if self._api_key() else "internal",
+                },
                 "logged_in": logged,
                 "nickname": self.client.self_nickname,
                 "running": self.loop_running,
