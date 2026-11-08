@@ -1,14 +1,17 @@
 import asyncio
+import base64
 import json
 import random
 import re
 import time
+from collections import deque
 from dataclasses import asdict
 from datetime import datetime
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools
+from astrbot.api.web import error_response, json_response, request
 
 from .douyin_client import Comment, DouyinClient, DouyinError, NotLoggedIn, Video
 from .store import Store
@@ -86,6 +89,23 @@ class DouyinAIPlugin(Star):
         self._last_reply = 0.0
         self._last_action = 0.0
         self._last_error = ""
+        self._events: deque = deque(maxlen=200)  # 网页上展示的动态
+        self._login = {"status": "idle", "qr": "", "msg": ""}  # 网页扫码登录状态
+        self._login_task: asyncio.Task | None = None
+        self._profile_tried = 0.0
+        for route, handler, methods in [
+            ("state", self.web_state, ["GET"]),
+            ("control", self.web_control, ["POST"]),
+            ("pending/approve", self.web_approve, ["POST"]),
+            ("pending/reject", self.web_reject, ["POST"]),
+            ("login/start", self.web_login_start, ["POST"]),
+            ("login/cookie", self.web_login_cookie, ["POST"]),
+            ("login/logout", self.web_logout, ["POST"]),
+            ("settings", self.web_settings, ["POST"]),
+        ]:
+            context.register_web_api(
+                f"/{PLUGIN_NAME}/{route}", handler, methods, f"Douyin AI {route}"
+            )
         if self.config.get("auto_run", False):
             try:
                 self._start_loop()
@@ -94,13 +114,18 @@ class DouyinAIPlugin(Star):
 
     async def terminate(self):
         self._running = False
-        for t in (self._loop_task, self._job_task):
+        for t in (self._loop_task, self._job_task, self._login_task):
             if t and not t.done():
                 t.cancel()
         await self.client.close()
 
     # ================================================================ 工具方法
+    def event_log(self, text: str, level: str = "info"):
+        self._events.append({"t": int(time.time()), "text": text, "level": level})
+
     async def notify(self, text: str, image: str | None = None):
+        level = "error" if text.startswith(("❌", "⚠️")) else "info"
+        self.event_log(text, level)
         umo = self.store.notify_umo
         if not umo:
             logger.info(f"[douyin] {text}")
@@ -170,6 +195,7 @@ class DouyinAIPlugin(Star):
         self.store.incr_today("comments")
         self.store.add_history("comment", f"{aweme_id} {desc[:30]}", text)
         logger.info(f"[douyin] 已评论 {aweme_id}: {text}")
+        self.event_log(f"✍️ 已评论「{desc[:20]}」：{text}", "success")
 
     async def _do_reply(self, aweme_id: str, c: Comment, text: str, page=None):
         await self._respect_gap()
@@ -179,6 +205,7 @@ class DouyinAIPlugin(Star):
         self.store.incr_today("replies")
         self.store.add_history("reply", f"{c.user}: {c.text[:30]}", text)
         logger.info(f"[douyin] 已回复 {c.user}: {text}")
+        self.event_log(f"💬 已回复 {c.user}「{c.text[:20]}」：{text}", "success")
 
     # ================================================================ 一轮刷视频
     async def browse_round(self) -> str:
@@ -309,10 +336,22 @@ class DouyinAIPlugin(Star):
             return
         self._running = True
         self._stopping = False
+        self._last_browse = self._last_reply = 0
         self._loop_task = asyncio.get_running_loop().create_task(self._loop())
+
+    def _stop_loop(self):
+        self._running = False
+        self._stopping = True
+        if self._loop_task and not self._loop_task.done():
+            self._loop_task.cancel()
+
+    @property
+    def loop_running(self) -> bool:
+        return bool(self._loop_task and not self._loop_task.done())
 
     async def _loop(self):
         logger.info("[douyin] 自动运行已开始")
+        self.event_log("▶️ 自动运行已开始")
         while self._running:
             try:
                 if in_active_hours(self.config.get("active_hours", "")):
@@ -324,14 +363,18 @@ class DouyinAIPlugin(Star):
                         >= int(r.get("interval_minutes", 30)) * 60
                     ):
                         self._last_reply = now
-                        logger.info("[douyin] " + await self.reply_round())
+                        msg = await self.reply_round()
+                        logger.info("[douyin] " + msg)
+                        self.event_log("🔁 " + msg)
                     if (
                         b.get("enable", True)
                         and now - self._last_browse
                         >= int(b.get("interval_minutes", 60)) * 60
                     ):
                         self._last_browse = now
-                        logger.info("[douyin] " + await self.browse_round())
+                        msg = await self.browse_round()
+                        logger.info("[douyin] " + msg)
+                        self.event_log("🎬 " + msg)
             except asyncio.CancelledError:
                 break
             except NotLoggedIn as e:
@@ -341,15 +384,18 @@ class DouyinAIPlugin(Star):
                 break
             except Exception as e:
                 self._last_error = f"{type(e).__name__}: {e}"
+                self.event_log(f"运行出错：{self._last_error}", "error")
                 logger.exception("[douyin] 自动运行出错")
             await asyncio.sleep(60 + random.uniform(0, 30))
         logger.info("[douyin] 自动运行已停止")
+        self.event_log("⏹ 自动运行已停止")
 
     def _run_job(self, coro, label: str) -> bool:
         if self._job_task and not self._job_task.done():
             coro.close()
             return False
         self._stopping = False
+        self.event_log(f"⏳ 开始{label}")
 
         async def wrapper():
             try:
@@ -360,6 +406,233 @@ class DouyinAIPlugin(Star):
 
         self._job_task = asyncio.get_running_loop().create_task(wrapper())
         return True
+
+    # ================================================================ 审核 / 登录（指令和网页共用）
+    async def approve_pending(self, pid: str, new_text: str = "") -> str:
+        """发送一条待审核内容，返回实际发出的文本。失败时放回队列并抛出异常。"""
+        action = self.store.pop_pending(pid)
+        if not action:
+            raise DouyinError(f"没有编号为 #{pid} 的待审核内容")
+        text = self._finalize_text(new_text) if new_text.strip() else action["text"]
+        try:
+            async with self.client.lock:
+                if action["type"] == "comment":
+                    await self._do_comment(
+                        action["aweme_id"], text, desc=action.get("desc", "")
+                    )
+                else:
+                    await self._do_reply(
+                        action["aweme_id"], Comment(**action["comment"]), text
+                    )
+        except Exception:
+            self.store.data["pending"][str(pid)] = action  # 失败放回队列
+            self.store.save()
+            raise
+        return text
+
+    def reject_pending(self, pid: str) -> int:
+        """放弃待审核内容，pid 为 "all" 时全部放弃。返回放弃的条数。"""
+        ids = list(self.store.list_pending()) if pid == "all" else [str(pid)]
+        n = 0
+        for i in ids:
+            a = self.store.pop_pending(i)
+            if not a:
+                continue
+            n += 1
+            if a["type"] == "reply":
+                self.store.mark_handled(a["cid"])
+            else:
+                self.store.mark_commented(a["aweme_id"])  # 不再对这个视频生成评论
+        return n
+
+    async def login_flow(self, on_qr) -> bool:
+        """扫码登录。on_qr(png_bytes) 在二维码出现时被调用。"""
+        async with self.client.lock:
+            ok = await self.client.login_qrcode(on_qr)
+        if ok:
+            try:
+                await self.client.fetch_self()
+            except Exception:
+                pass
+            self.event_log(f"🎉 抖音登录成功：{self.client.self_nickname}", "success")
+        return ok
+
+    # ================================================================ 可视化页面 API
+    async def web_state(self):
+        try:
+            logged = await self.client.is_logged_in()
+        except Exception as e:  # e.g. playwright / chromium not installed
+            logged = False
+            self._last_error = str(e)
+        # Fetch the nickname at most once every 10 minutes so polling stays fast
+        if (
+            logged
+            and not self.client.self_nickname
+            and not self.client.lock.locked()
+            and time.time() - self._profile_tried > 600
+        ):
+            self._profile_tried = time.time()
+            try:
+                async with self.client.lock:
+                    await self.client.fetch_self()
+            except Exception:
+                pass
+        b, r = self.config.get("browse", {}), self.config.get("reply", {})
+        return json_response(
+            {
+                "logged_in": logged,
+                "nickname": self.client.self_nickname,
+                "running": self.loop_running,
+                "busy": self.client.lock.locked()
+                or bool(self._job_task and not self._job_task.done()),
+                "in_active_hours": in_active_hours(self.config.get("active_hours", "")),
+                "last_browse": int(self._last_browse),
+                "last_reply": int(self._last_reply),
+                "last_error": self._last_error,
+                "notify_bound": bool(self.store.notify_umo),
+                "today": {
+                    "comments": self.store.count_today("comments"),
+                    "replies": self.store.count_today("replies"),
+                    "max_comments": int(b.get("max_comments_per_day", 10)),
+                    "max_replies": int(r.get("max_replies_per_day", 30)),
+                },
+                "pending": [
+                    {"id": pid, **a} for pid, a in self.store.list_pending().items()
+                ],
+                "history": list(reversed(self.store.data["history"][-50:])),
+                "events": list(reversed(self._events)),
+                "login": self._login,
+                "settings": {
+                    "persona": self.config.get("persona", ""),
+                    "review_mode": self.config.get("review_mode", True),
+                    "signature": self.config.get("signature", ""),
+                    "active_hours": self.config.get("active_hours", ""),
+                    "browse_enable": b.get("enable", True),
+                    "browse_interval": int(b.get("interval_minutes", 60)),
+                    "max_comments_per_day": int(b.get("max_comments_per_day", 10)),
+                    "comment_probability": float(b.get("comment_probability", 0.3)),
+                    "reply_enable": r.get("enable", True),
+                    "reply_interval": int(r.get("interval_minutes", 30)),
+                    "max_replies_per_day": int(r.get("max_replies_per_day", 30)),
+                },
+            }
+        )
+
+    async def web_control(self):
+        action = (await request.json(default={})).get("action")
+        if action == "stop":
+            self._stop_loop()
+            return json_response({"message": "已停止自动运行"})
+        if action not in ("start", "browse", "reply"):
+            return error_response("未知操作", status_code=400)
+        if not await self.client.is_logged_in():
+            return error_response("还没登录抖音，请先扫码登录", status_code=400)
+        if action == "start":
+            self._start_loop()
+            return json_response({"message": "已开始自动运行"})
+        coro, label = (
+            (self.browse_round(), "刷视频")
+            if action == "browse"
+            else (self.reply_round(), "检查评论")
+        )
+        if not self._run_job(coro, label):
+            return error_response("上一个手动任务还没结束，请稍后再试", status_code=409)
+        return json_response({"message": f"已开始{label}，完成后会显示在动态里"})
+
+    async def web_approve(self):
+        body = await request.json(default={})
+        try:
+            text = await self.approve_pending(
+                str(body.get("id", "")), str(body.get("text") or "")
+            )
+        except Exception as e:
+            msg = (str(e).splitlines() or [type(e).__name__])[0]
+            return error_response(f"发送失败：{msg}", status_code=400)
+        return json_response({"message": f"已发送：{text}"})
+
+    async def web_reject(self):
+        n = self.reject_pending(str((await request.json(default={})).get("id", "")))
+        return json_response({"message": f"已放弃 {n} 条"})
+
+    async def web_login_start(self):
+        if await self.client.is_logged_in():
+            return json_response({"message": "已经是登录状态"})
+        if self._login_task and not self._login_task.done():
+            return json_response({"message": "正在登录中"})
+        self._login = {"status": "loading", "qr": "", "msg": "正在打开抖音登录页…"}
+
+        def on_qr(png: bytes):
+            self._login = {
+                "status": "qr",
+                "qr": "data:image/png;base64," + base64.b64encode(png).decode(),
+                "msg": "请用抖音 App 扫码（3 分钟内有效）",
+            }
+
+        async def run():
+            try:
+                ok = await self.login_flow(on_qr)
+                self._login = (
+                    {"status": "success", "qr": "", "msg": "登录成功"}
+                    if ok
+                    else {"status": "timeout", "qr": "", "msg": "扫码超时，请重试"}
+                )
+            except Exception as e:
+                self._login = {"status": "error", "qr": "", "msg": f"登录出错：{e}"}
+
+        self._login_task = asyncio.get_running_loop().create_task(run())
+        return json_response({"message": "正在获取二维码"})
+
+    async def web_login_cookie(self):
+        raw = str((await request.json(default={})).get("cookie") or "").strip()
+        if "=" not in raw:
+            return error_response(
+                "Cookie 格式不对，应为 name=value; name2=value2", status_code=400
+            )
+        n = await self.client.import_cookies(raw)
+        if not await self.client.is_logged_in():
+            return error_response(
+                f"导入了 {n} 个 Cookie，但没有检测到登录信息（sessionid）",
+                status_code=400,
+            )
+        self.event_log("🍪 已通过 Cookie 登录", "success")
+        return json_response({"message": f"导入成功（{n} 个 Cookie）"})
+
+    async def web_logout(self):
+        self._stop_loop()
+        await self.client.logout()
+        self._login = {"status": "idle", "qr": "", "msg": ""}
+        self.event_log("👋 已退出抖音登录")
+        return json_response({"message": "已退出登录"})
+
+    async def web_settings(self):
+        body = await request.json(default={})
+        b = self.config.setdefault("browse", {})
+        r = self.config.setdefault("reply", {})
+        try:
+            for key, target, field, cast in [
+                ("persona", self.config, "persona", str),
+                ("review_mode", self.config, "review_mode", bool),
+                ("signature", self.config, "signature", str),
+                ("active_hours", self.config, "active_hours", str),
+                ("browse_enable", b, "enable", bool),
+                ("browse_interval", b, "interval_minutes", int),
+                ("max_comments_per_day", b, "max_comments_per_day", int),
+                ("comment_probability", b, "comment_probability", float),
+                ("reply_enable", r, "enable", bool),
+                ("reply_interval", r, "interval_minutes", int),
+                ("max_replies_per_day", r, "max_replies_per_day", int),
+            ]:
+                if key in body:
+                    target[field] = cast(body[key])
+        except (TypeError, ValueError):
+            return error_response("设置的数值格式不对", status_code=400)
+        hours = self.config.get("active_hours", "").strip()
+        if hours and not re.fullmatch(r"\d{1,2}-\d{1,2}", hours):
+            return error_response("活跃时间格式应为 9-23 这样", status_code=400)
+        b["comment_probability"] = min(max(b.get("comment_probability", 0.3), 0), 1)
+        self.config.save_config()
+        self.event_log("⚙️ 设置已保存")
+        return json_response({"message": "设置已保存"})
 
     # ================================================================ 指令
     def _bind_if_empty(self, event: AstrMessageEvent):
@@ -378,7 +651,7 @@ class DouyinAIPlugin(Star):
         umo = event.unified_msg_origin
         if await self.client.is_logged_in():
             yield event.plain_result(
-                "已经是登录状态。如需换号，请删除插件数据目录下的 browser_profile 后重试。"
+                "已经是登录状态。如需换号，请在插件管理页面点「退出登录」。"
             )
             return
         yield event.plain_result("正在打开抖音登录页，请稍候…")
@@ -394,17 +667,12 @@ class DouyinAIPlugin(Star):
             )
 
         try:
-            async with self.client.lock:
-                ok = await self.client.login_qrcode(on_qr)
+            ok = await self.login_flow(on_qr)
         except Exception as e:
             yield event.plain_result(f"登录出错：{e}")
             return
         if ok:
-            try:
-                info = await self.client.fetch_self()
-                name = info["profile"].get("nickname", "")
-            except Exception:
-                name = ""
+            name = self.client.self_nickname
             yield event.plain_result(f"🎉 登录成功{('：' + name) if name else ''}")
         else:
             yield event.plain_result(
@@ -443,7 +711,6 @@ class DouyinAIPlugin(Star):
         if not await self.client.is_logged_in():
             yield event.plain_result("还没登录，请先 /dy login")
             return
-        self._last_browse = self._last_reply = 0
         self._start_loop()
         mode = (
             "人工审核模式（AI 生成后需要你确认）"
@@ -458,10 +725,7 @@ class DouyinAIPlugin(Star):
     @dy.command("stop")
     async def cmd_stop(self, event: AstrMessageEvent):
         """停止自动运行"""
-        self._running = False
-        self._stopping = True
-        if self._loop_task and not self._loop_task.done():
-            self._loop_task.cancel()
+        self._stop_loop()
         yield event.plain_result("⏹ 已停止自动运行（正在进行的操作会做完当前这一步）")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -489,10 +753,9 @@ class DouyinAIPlugin(Star):
     async def cmd_status(self, event: AstrMessageEvent):
         """查看运行状态"""
         logged = await self.client.is_logged_in()
-        running = bool(self._loop_task and not self._loop_task.done())
         lines = [
             f"登录：{'✅ ' + (self.client.self_nickname or '') if logged else '❌ 未登录'}",
-            f"自动运行：{'运行中' if running else '已停止'}",
+            f"自动运行：{'运行中' if self.loop_running else '已停止'}",
             f"模式：{'人工审核' if self.config.get('review_mode', True) else '全自动'}",
             f"今日评论：{self.store.count_today('comments')}/{self.config.get('browse', {}).get('max_comments_per_day', 10)}",
             f"今日回复：{self.store.count_today('replies')}/{self.config.get('reply', {}).get('max_replies_per_day', 30)}",
@@ -533,27 +796,12 @@ class DouyinAIPlugin(Star):
         if not m:
             yield event.plain_result("用法：/dy ok 编号 [修改后的内容]")
             return
-        pid, new_text = m.group(1), m.group(2).strip()
-        action = self.store.pop_pending(pid)
-        if not action:
-            yield event.plain_result(f"没有编号为 #{pid} 的待审核内容")
-            return
-        text = self._finalize_text(new_text) if new_text else action["text"]
+        pid = m.group(1)
         yield event.plain_result(f"正在发送 #{pid}…")
         try:
-            async with self.client.lock:
-                if action["type"] == "comment":
-                    await self._do_comment(
-                        action["aweme_id"], text, desc=action.get("desc", "")
-                    )
-                else:
-                    await self._do_reply(
-                        action["aweme_id"], Comment(**action["comment"]), text
-                    )
+            text = await self.approve_pending(pid, m.group(2))
         except Exception as e:
-            self.store.data["pending"][pid] = action  # 失败放回队列
-            self.store.save()
-            yield event.plain_result(f"❌ 发送失败：{e}\n内容已放回待审核列表")
+            yield event.plain_result(f"❌ 发送失败：{e}")
             return
         yield event.plain_result(f"✅ #{pid} 已发送：{text}")
 
@@ -562,22 +810,13 @@ class DouyinAIPlugin(Star):
     async def cmd_no(self, event: AstrMessageEvent):
         """放弃待审核内容：/dy no 编号 或 /dy no all"""
         arg = event.message_str.strip().split()[-1]
-        if arg == "all":
-            for pid in list(self.store.list_pending()):
-                a = self.store.pop_pending(pid)
-                if a and a["type"] == "reply":
-                    self.store.mark_handled(a["cid"])
-            yield event.plain_result("已清空待审核列表")
-            return
-        a = self.store.pop_pending(arg)
-        if not a:
+        n = self.reject_pending(arg)
+        if not n:
             yield event.plain_result(f"没有编号为 #{arg} 的待审核内容")
-            return
-        if a["type"] == "reply":
-            self.store.mark_handled(a["cid"])
         else:
-            self.store.mark_commented(a["aweme_id"])  # 不再对这个视频生成评论
-        yield event.plain_result(f"已放弃 #{arg}")
+            yield event.plain_result(
+                "已清空待审核列表" if arg == "all" else f"已放弃 #{arg}"
+            )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @dy.command("history")

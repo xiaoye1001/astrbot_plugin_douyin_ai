@@ -1,0 +1,8 @@
+{
+  "views": {
+    "dashboard": {
+      "title": "Douyin AI",
+      "description": "Log in to Douyin, review AI comments, watch activity and adjust settings."
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "views": {
+    "dashboard": {
+      "title": "抖音 AI 管理",
+      "description": "登录抖音、审核 AI 评论、查看运行动态和调整设置。"
+    }
+  }
+}

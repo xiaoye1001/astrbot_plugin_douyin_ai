@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>抖音 AI 管理</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <div class="brand">
+          <div class="logo" aria-hidden="true">♪</div>
+          <div>
+            <h1>抖音 AI 助手</h1>
+            <div class="sub" id="account-line">正在加载…</div>
+          </div>
+        </div>
+        <div class="status-pill" id="run-pill"><span class="dot"></span><span id="run-text">—</span></div>
+      </header>
+
+      <div class="banner warn hidden" id="login-banner">
+        <span>还没有登录抖音账号，AI 暂时无法工作。</span>
+        <button class="btn small primary" data-goto="account">去登录</button>
+      </div>
+      <div class="banner error hidden" id="error-banner"></div>
+
+      <section class="stats">
+        <div class="stat">
+          <div class="stat-label">今日评论</div>
+          <div class="stat-value"><span id="s-comments">0</span><small id="s-comments-max">/ 0</small></div>
+          <div class="bar"><i id="b-comments"></i></div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">今日回复</div>
+          <div class="stat-value"><span id="s-replies">0</span><small id="s-replies-max">/ 0</small></div>
+          <div class="bar"><i id="b-replies"></i></div>
+        </div>
+        <div class="stat clickable" data-goto="pending">
+          <div class="stat-label">待审核</div>
+          <div class="stat-value"><span id="s-pending">0</span><small>条</small></div>
+          <div class="stat-hint" id="s-mode">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">最近一轮</div>
+          <div class="stat-value small" id="s-last">—</div>
+          <div class="stat-hint" id="s-hours">—</div>
+        </div>
+      </section>
+
+      <section class="controls">
+        <button class="btn primary" id="btn-toggle">开始自动运行</button>
+        <button class="btn" id="btn-browse">🎬 立即刷一轮</button>
+        <button class="btn" id="btn-reply">💬 立即检查评论</button>
+        <label class="switch" title="开启后 AI 写好的内容要你确认才会发出">
+          <input type="checkbox" id="quick-review" />
+          <span class="track"><span class="thumb"></span></span>
+          <span>人工审核</span>
+        </label>
+      </section>
+
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="pending">待审核 <span class="badge hidden" id="tab-badge">0</span></button>
+        <button class="tab" data-tab="events">动态</button>
+        <button class="tab" data-tab="history">已发送</button>
+        <button class="tab" data-tab="settings">设置</button>
+        <button class="tab" data-tab="account">账号</button>
+      </nav>
+
+      <!-- 待审核 -->
+      <section class="panel" data-panel="pending">
+        <div class="panel-head">
+          <p class="muted">AI 写好的评论和回复在这里，可以直接修改文字后再发送。</p>
+          <button class="btn small ghost danger" id="btn-reject-all">全部放弃</button>
+        </div>
+        <div id="pending-list" class="cards"></div>
+        <div class="empty" id="pending-empty">
+          <div class="empty-icon">✨</div>
+          <div>暂时没有待审核的内容</div>
+          <div class="muted">点上面的「立即刷一轮」，让 AI 去找找想评论的视频</div>
+        </div>
+      </section>
+
+      <!-- 动态 -->
+      <section class="panel hidden" data-panel="events">
+        <ul class="timeline" id="event-list"></ul>
+        <div class="empty hidden" id="events-empty"><div class="empty-icon">📭</div><div>还没有动态</div></div>
+      </section>
+
+      <!-- 已发送 -->
+      <section class="panel hidden" data-panel="history">
+        <ul class="history" id="history-list"></ul>
+        <div class="empty hidden" id="history-empty"><div class="empty-icon">📝</div><div>还没有发过内容</div></div>
+      </section>
+
+      <!-- 设置 -->
+      <section class="panel hidden" data-panel="settings">
+        <form id="settings-form" class="form">
+          <div class="field">
+            <label for="f-persona">AI 人设</label>
+            <textarea id="f-persona" name="persona" rows="4"></textarea>
+            <div class="hint">决定 AI 说话的风格，比如“说话风趣、喜欢美食的大学生，评论简短口语化”。</div>
+          </div>
+          <div class="grid2">
+            <fieldset>
+              <legend>刷视频与评论</legend>
+              <label class="check"><input type="checkbox" name="browse_enable" /> 自动刷视频</label>
+              <div class="field"><label>每隔几分钟刷一轮</label><input type="number" min="10" name="browse_interval" /></div>
+              <div class="field"><label>每天最多评论几条</label><input type="number" min="0" name="max_comments_per_day" /></div>
+              <div class="field">
+                <label>考虑评论的概率 <output id="prob-out"></output></label>
+                <input type="range" min="0" max="1" step="0.05" name="comment_probability" />
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>回复我的作品评论</legend>
+              <label class="check"><input type="checkbox" name="reply_enable" /> 自动回复评论</label>
+              <div class="field"><label>每隔几分钟检查一次</label><input type="number" min="5" name="reply_interval" /></div>
+              <div class="field"><label>每天最多回复几条</label><input type="number" min="0" name="max_replies_per_day" /></div>
+            </fieldset>
+          </div>
+          <div class="grid2">
+            <div class="field">
+              <label>活跃时间段</label>
+              <input type="text" name="active_hours" placeholder="9-23" />
+              <div class="hint">只在这段时间自动运行，留空表示全天。</div>
+            </div>
+            <div class="field">
+              <label>评论后缀（可选）</label>
+              <input type="text" name="signature" placeholder="例如：（AI 代回）" />
+              <div class="hint">会加在每条 AI 发出的内容末尾。</div>
+            </div>
+          </div>
+          <label class="check"><input type="checkbox" name="review_mode" /> 人工审核模式（AI 生成的内容要我确认后才发出）</label>
+          <div class="form-actions">
+            <span class="muted" id="settings-dirty"></span>
+            <button type="button" class="btn ghost" id="btn-settings-reset">撤销修改</button>
+            <button type="submit" class="btn primary">保存设置</button>
+          </div>
+          <p class="muted small-note">选择模型、页面选择器等高级选项，请在插件的「配置」里修改。</p>
+        </form>
+      </section>
+
+      <!-- 账号 -->
+      <section class="panel hidden" data-panel="account">
+        <div class="account-card" id="account-in">
+          <div class="avatar" id="acc-avatar">?</div>
+          <div class="acc-info">
+            <div class="acc-name" id="acc-name">—</div>
+            <div class="muted">抖音账号已登录，登录状态会一直保存</div>
+          </div>
+          <button class="btn ghost danger" id="btn-logout">退出登录</button>
+        </div>
+
+        <div id="account-out" class="login-grid">
+          <div class="login-box">
+            <h3>扫码登录（推荐）</h3>
+            <div class="qr-wrap" id="qr-wrap">
+              <div class="qr-placeholder" id="qr-placeholder">点击下面的按钮获取二维码</div>
+              <img id="qr-img" class="hidden" alt="抖音登录二维码" />
+            </div>
+            <div class="muted center" id="qr-msg"></div>
+            <button class="btn primary block" id="btn-login">获取登录二维码</button>
+          </div>
+          <div class="login-box">
+            <h3>导入 Cookie</h3>
+            <p class="muted">扫码需要短信验证、或服务器上无法扫码时使用：在电脑浏览器登录抖音网页版，按 F12 → 网络（Network）→ 任意请求 → 复制请求头里的 Cookie。</p>
+            <textarea id="cookie-input" rows="5" placeholder="sessionid=xxx; ttwid=xxx; ..."></textarea>
+            <button class="btn block" id="btn-cookie">导入 Cookie</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="toast hidden" id="toast"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

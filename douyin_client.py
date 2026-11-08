@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -231,7 +232,14 @@ class DouyinClient:
             name, value = part.strip().split("=", 1)
             if name:
                 items.append(
-                    {"name": name, "value": value, "domain": ".douyin.com", "path": "/"}
+                    {
+                        "name": name,
+                        "value": value,
+                        "domain": ".douyin.com",
+                        "path": "/",
+                        # Give imported cookies an expiry so they survive restarts
+                        "expires": time.time() + 60 * 86400,
+                    }
                 )
         if items:
             await self._ctx.add_cookies(items)
@@ -364,18 +372,22 @@ class DouyinClient:
                 pass
 
         page.on("response", on_resp)
-        await page.goto(
-            VIDEO_URL.format(aweme_id=aweme_id), wait_until="domcontentloaded"
-        )
-        for _ in range(8):
-            await page.wait_for_timeout(1200)
-            if comments:
-                break
-        if not comments:
-            icon = await self._find(page, "comment_icon", timeout=1500)
-            if icon:
-                await icon.click()
-                await page.wait_for_timeout(3000)
+        try:
+            await page.goto(
+                VIDEO_URL.format(aweme_id=aweme_id), wait_until="domcontentloaded"
+            )
+            for _ in range(8):
+                await page.wait_for_timeout(1200)
+                if comments:
+                    break
+            if not comments:
+                icon = await self._find(page, "comment_icon", timeout=1500)
+                if icon:
+                    await icon.click()
+                    await page.wait_for_timeout(3000)
+        except Exception:
+            await page.close()  # do not leak the tab when the video fails to load
+            raise
         video = Video.from_json(info) if info else None
         return page, video, comments
 
@@ -464,3 +476,9 @@ class DouyinClient:
             await page.mouse.wheel(0, 1200)
             await page.wait_for_timeout(1500)
         return None
+
+    async def logout(self):
+        """清除登录态（换号时使用）。"""
+        await self.start()
+        await self._ctx.clear_cookies()
+        self.self_uid = self.self_sec_uid = self.self_nickname = ""
