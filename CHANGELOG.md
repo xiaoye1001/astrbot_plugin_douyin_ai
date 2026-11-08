@@ -2,6 +2,12 @@
 
 本项目的所有重要变更都记录在这里。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.5] - 2026-11-08
+
+### 新增
+- 扫码登录支持「实时画面」：登录时管理页面「账号」里会显示服务器上浏览器的实时画面。遇到滑块、点选或短信验证码时，直接在画面上点击、按住拖动，或在下方输入框填写验证码，你的操作会原样传给浏览器，由你本人完成验证（插件不会自动破解验证码）。
+- 扫码等待时间由 3 分钟延长到 5 分钟，留出完成验证的时间。
+
 ## [0.4.4] - 2026-11-08
 
 ### 新增
@@ -90,6 +96,7 @@
 - 人工审核模式、每日上限、发言间隔、活跃时间段。
 - `/dy` 系列管理指令。
 
+[0.4.5]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.5
 [0.4.4]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.4
 [0.4.3]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.3
 [0.4.2]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.2

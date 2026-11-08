@@ -41,6 +41,10 @@ SELF_PROFILE_API = "/aweme/v1/web/user/profile/self"
 POST_LIST_API = "/aweme/v1/web/aweme/post/"
 
 
+VIEWPORT = (1366, 860)
+REMOTE_KEYS = {"Enter", "Backspace", "Tab", "Escape", "ArrowLeft", "ArrowRight"}
+
+
 class DouyinError(Exception):
     pass
 
@@ -168,6 +172,7 @@ class DouyinClient:
         self.self_uid: str = ""
         self.self_sec_uid: str = ""
         self.self_nickname: str = ""
+        self.login_page = None  # open while a login is in progress (remote assist)
 
     # ------------------------------------------------------------------ 生命周期
     # ------------------------------------------------------------------ 浏览器
@@ -194,7 +199,7 @@ class DouyinClient:
         return await self._pw.chromium.launch_persistent_context(
             str(self.profile_dir),
             headless=self.headless,
-            viewport={"width": 1366, "height": 860},
+            viewport={"width": VIEWPORT[0], "height": VIEWPORT[1]},
             locale="zh-CN",
             timezone_id="Asia/Shanghai",
             timeout=30000,
@@ -404,10 +409,16 @@ class DouyinClient:
         return len(items)
 
     async def login_qrcode(
-        self, on_qrcode: Callable[[bytes], Any], timeout_s: int = 180
+        self, on_qrcode: Callable[[bytes], Any], timeout_s: int = 300
     ) -> bool:
-        """打开登录弹窗，把二维码截图交给 on_qrcode 回调，然后等待扫码完成。"""
+        """打开登录弹窗，把二维码截图交给 on_qrcode 回调，然后等待扫码完成。
+
+        While waiting, the page is exposed as ``login_page`` so the user can see it
+        and complete any human verification (slider, SMS code) themselves through
+        the dashboard (see remote_* below). Nothing is solved automatically.
+        """
         page = await self._new_page()
+        self.login_page = page
         try:
             await page.goto(DOUYIN_HOME, wait_until="domcontentloaded")
             await page.wait_for_timeout(4000)
@@ -431,7 +442,52 @@ class DouyinClient:
                     return True
             return False
         finally:
+            self.login_page = None
             await page.close()
+
+    # ------------------------------------------------------------------ 远程协助
+    # The dashboard shows the login page and relays the user's own clicks, drags
+    # and typing, so a human can pass Douyin's verification on a headless server.
+    def _login_page(self):
+        if self.login_page is None or self.login_page.is_closed():
+            raise DouyinError("当前没有正在进行的登录")
+        return self.login_page
+
+    async def remote_screenshot(self) -> bytes:
+        return await self._login_page().screenshot(type="jpeg", quality=60)
+
+    @staticmethod
+    def _px(x: float, y: float) -> tuple[float, float]:
+        """Relative (0..1) coordinates from the dashboard -> page pixels."""
+        x, y = min(max(float(x), 0.0), 1.0), min(max(float(y), 0.0), 1.0)
+        return x * VIEWPORT[0], y * VIEWPORT[1]
+
+    async def remote_click(self, x: float, y: float):
+        page = self._login_page()
+        await page.mouse.click(*self._px(x, y))
+
+    async def remote_drag(self, points: list):
+        """Replay a drag the user did on the screenshot: [[x, y, ms], ...]."""
+        page = self._login_page()
+        pts = [(float(p[0]), float(p[1]), float(p[2])) for p in points[:300]]
+        if len(pts) < 2:
+            return
+        await page.mouse.move(*self._px(pts[0][0], pts[0][1]))
+        await page.mouse.down()
+        last_t = pts[0][2]
+        for x, y, t in pts[1:]:
+            await asyncio.sleep(min(max(t - last_t, 0), 200) / 1000)
+            last_t = t
+            await page.mouse.move(*self._px(x, y))
+        await page.mouse.up()
+
+    async def remote_type(self, text: str):
+        await self._login_page().keyboard.type(text[:50], delay=random.randint(60, 140))
+
+    async def remote_key(self, key: str):
+        if key not in REMOTE_KEYS:
+            raise DouyinError(f"不支持的按键：{key}")
+        await self._login_page().keyboard.press(key)
 
     async def ensure_login(self):
         if not await self.is_logged_in():

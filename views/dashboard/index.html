@@ -177,6 +177,22 @@
             <button class="btn block" id="btn-cookie">导入 Cookie</button>
           </div>
         </div>
+        <div class="remote hidden" id="remote">
+          <div class="remote-head">
+            <h3>实时画面</h3>
+            <span class="muted">遇到滑块、点选或短信验证时，直接在画面上操作：点击、按住拖动都可以</span>
+          </div>
+          <div class="remote-screen" id="remote-screen">
+            <img id="remote-img" alt="登录页面实时画面" draggable="false" />
+            <div class="remote-loading" id="remote-loading">正在连接画面…</div>
+          </div>
+          <div class="remote-input">
+            <input type="text" id="remote-text" maxlength="50" placeholder="需要输入验证码时，先点一下画面里的输入框，再在这里填写" />
+            <button class="btn primary" id="remote-send">输入</button>
+            <button class="btn" data-key="Backspace">删除</button>
+            <button class="btn" data-key="Enter">回车</button>
+          </div>
+        </div>
       </section>
 
       <!-- 关于与更新 -->

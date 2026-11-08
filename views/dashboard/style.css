@@ -187,6 +187,17 @@ legend { padding: 0 6px; font-weight: 600; }
 .qr-wrap img { width: 100%; height: 100%; object-fit: contain; }
 .qr-placeholder { color: #9aa1ad; font-size: 13px; padding: 20px; text-align: center; }
 
+/* ---------- remote assist ---------- */
+.remote { margin-top: 16px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); }
+.remote-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.remote-head h3 { margin: 0; font-size: 15px; }
+.remote-head .muted { font-size: 13px; }
+.remote-screen { position: relative; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #000; aspect-ratio: 1366 / 860; }
+.remote-screen img { display: block; width: 100%; height: 100%; object-fit: contain; cursor: crosshair; touch-action: none; user-select: none; -webkit-user-drag: none; }
+.remote-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #9aa1ad; font-size: 13px; pointer-events: none; }
+.remote-input { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.remote-input input { flex: 1; min-width: 180px; }
+
 /* ---------- about / update ---------- */
 .about-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); }
 .about-row { display: flex; align-items: center; gap: 32px; flex-wrap: wrap; }

@@ -13,7 +13,14 @@ from astrbot.api.star import Context, Star, StarTools
 from astrbot.api.web import error_response, json_response, request
 
 from .core import updater
-from .core.douyin_client import Comment, DouyinClient, DouyinError, NotLoggedIn, Video
+from .core.douyin_client import (
+    VIEWPORT,
+    Comment,
+    DouyinClient,
+    DouyinError,
+    NotLoggedIn,
+    Video,
+)
 from .core.prompts import COMMENT_PROMPT, REPLY_PROMPT, quote
 from .core.store import Store
 from .core.utils import clean_output, in_active_hours, parse_json
@@ -67,6 +74,8 @@ class DouyinAIPlugin(Star):
             ("login/start", self.web_login_start, ["POST"]),
             ("login/cookie", self.web_login_cookie, ["POST"]),
             ("login/logout", self.web_logout, ["POST"]),
+            ("login/screen", self.web_login_screen, ["GET"]),
+            ("login/input", self.web_login_input, ["POST"]),
             ("settings", self.web_settings, ["POST"]),
             ("update/check", self.web_update_check, ["POST"]),
             ("update/run", self.web_update_run, ["POST"]),
@@ -691,7 +700,7 @@ class DouyinAIPlugin(Star):
             self._login = {
                 "status": "qr",
                 "qr": "data:image/png;base64," + base64.b64encode(png).decode(),
-                "msg": "请用抖音 App 扫码（3 分钟内有效）",
+                "msg": "请用抖音 App 扫码。如果出现滑块、短信等验证，在下方「实时画面」里亲手完成",
             }
 
         async def run():
@@ -727,6 +736,54 @@ class DouyinAIPlugin(Star):
             )
         self.event_log("🍪 已通过 Cookie 登录", "success")
         return json_response({"message": f"导入成功（{n} 个 Cookie）"})
+
+    async def web_login_screen(self):
+        """Live screenshot of the login page (remote assist)."""
+        try:
+            jpg = await self.client.remote_screenshot()
+        except Exception:
+            return json_response({"img": ""})
+        w, h = VIEWPORT
+        return json_response(
+            {
+                "img": "data:image/jpeg;base64," + base64.b64encode(jpg).decode(),
+                "w": w,
+                "h": h,
+            }
+        )
+
+    async def web_login_input(self):
+        """Relay the user's own click / drag / typing to the login page."""
+        body = await request.json(default={})
+        kind = body.get("type")
+        try:
+            if kind == "click":
+                x, y = float(body["x"]), float(body["y"])
+                if not (0 <= x <= 1 and 0 <= y <= 1):
+                    raise ValueError("坐标超出画面")
+                await self.client.remote_click(x, y)
+            elif kind == "drag":
+                points = body.get("points")
+                if not isinstance(points, list) or not 2 <= len(points) <= 300:
+                    raise ValueError("拖动轨迹无效")
+                points = [[float(p[0]), float(p[1]), float(p[2])] for p in points]
+                if not all(0 <= p[0] <= 1 and 0 <= p[1] <= 1 for p in points):
+                    raise ValueError("坐标超出画面")
+                await self.client.remote_drag(points)
+            elif kind == "text":
+                text = str(body.get("text") or "")
+                if not text or len(text) > 50:
+                    raise ValueError("请输入 1~50 个字符")
+                await self.client.remote_type(text)
+            elif kind == "key":
+                await self.client.remote_key(str(body.get("key") or ""))
+            else:
+                raise ValueError("未知操作")
+        except (KeyError, TypeError, ValueError, IndexError) as e:
+            return error_response(f"操作无效：{e}", status_code=400)
+        except DouyinError as e:
+            return error_response(str(e), status_code=409)
+        return json_response({"ok": True})
 
     async def web_logout(self):
         self._stop_loop()
@@ -832,7 +889,10 @@ class DouyinAIPlugin(Star):
             await self.context.send_message(
                 umo,
                 MessageChain()
-                .message("请用抖音 App 扫描二维码登录（3 分钟内有效）：")
+                .message(
+                    "请用抖音 App 扫描二维码登录（5 分钟内有效）。"
+                    "如果要求滑块或短信验证，请打开 AstrBot 管理面板「抖音 AI 管理 → 账号」，在实时画面里完成："
+                )
                 .file_image(str(path)),
             )
 

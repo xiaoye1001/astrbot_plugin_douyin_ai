@@ -2,7 +2,7 @@
 # runtime dependencies live in requirements.txt.
 [project]
 name = "astrbot_plugin_douyin_ai"
-version = "0.4.4"
+version = "0.4.5"
 description = "AstrBot 插件：让 AI 自动刷抖音、评论、回复评论"
 readme = "README.md"
 requires-python = ">=3.10"

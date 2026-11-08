@@ -142,6 +142,7 @@ function render() {
   renderEvents();
   renderHistory();
   renderAccount();
+  syncRemote();
   renderUpdate();
   if (!settingsLoaded || !settingsDirty) fillSettings();
 }
@@ -306,6 +307,99 @@ function renderUpdate() {
     repo.textContent = u.repo.replace(/^https?:\/\//, "");
   }
 }
+
+// ---------------------------------------------------------------- remote assist
+// While logging in, show the server's browser and relay the user's own input,
+// so they can pass Douyin's human verification themselves.
+let remoteTimer = null;
+let remoteBusy = false;
+
+async function refreshRemote() {
+  if (remoteBusy) return;
+  remoteBusy = true;
+  try {
+    const r = await bridge.apiGet("login/screen");
+    if (r.img) {
+      $("remote-img").src = r.img;
+      $("remote-loading").classList.add("hidden");
+    }
+  } catch (e) {
+    /* page may be between states; next tick retries */
+  } finally {
+    remoteBusy = false;
+  }
+}
+
+function syncRemote() {
+  const active = !state.logged_in && ["loading", "qr"].includes(state.login?.status);
+  $("remote").classList.toggle("hidden", !active);
+  if (active && !remoteTimer) {
+    $("remote-loading").classList.remove("hidden");
+    refreshRemote();
+    remoteTimer = setInterval(refreshRemote, 800);
+  } else if (!active && remoteTimer) {
+    clearInterval(remoteTimer);
+    remoteTimer = null;
+  }
+}
+
+async function sendInput(body) {
+  try {
+    await bridge.apiPost("login/input", body);
+  } catch (e) {
+    toast(e.message || String(e), true);
+  }
+  setTimeout(refreshRemote, 250);
+}
+
+(() => {
+  const img = $("remote-img");
+  let start = null;
+  let points = [];
+  const rel = (e) => {
+    const r = img.getBoundingClientRect();
+    return [
+      Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1),
+      Math.min(Math.max((e.clientY - r.top) / r.height, 0), 1),
+    ];
+  };
+  img.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    img.setPointerCapture(e.pointerId);
+    start = { x: e.clientX, y: e.clientY, t: performance.now() };
+    points = [[...rel(e), 0]];
+  });
+  img.addEventListener("pointermove", (e) => {
+    if (!start) return;
+    const t = performance.now() - start.t;
+    if (t - points[points.length - 1][2] >= 16 && points.length < 300) points.push([...rel(e), t]);
+  });
+  img.addEventListener("pointerup", (e) => {
+    if (!start) return;
+    const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+    points.push([...rel(e), performance.now() - start.t]);
+    start = null;
+    if (moved < 6) {
+      const [x, y] = rel(e);
+      sendInput({ type: "click", x, y });
+    } else {
+      sendInput({ type: "drag", points: points.slice(0, 300) });
+    }
+  });
+  img.addEventListener("pointercancel", () => (start = null));
+
+  const sendText = () => {
+    const text = $("remote-text").value;
+    if (!text) return;
+    $("remote-text").value = "";
+    sendInput({ type: "text", text });
+  };
+  $("remote-send").addEventListener("click", sendText);
+  $("remote-text").addEventListener("keydown", (e) => e.key === "Enter" && sendText());
+  document.querySelectorAll("[data-key]").forEach((b) =>
+    b.addEventListener("click", () => sendInput({ type: "key", key: b.dataset.key })),
+  );
+})();
 
 // ---------------------------------------------------------------- settings
 const form = $("settings-form");

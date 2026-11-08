@@ -62,6 +62,24 @@ class FakeClient:
     async def logout(self):
         self.logged_in = False
 
+    # remote assist
+    remote = []
+
+    async def remote_screenshot(self):
+        return b"\xff\xd8fake"
+
+    async def remote_click(self, x, y):
+        self.remote.append(("click", x, y))
+
+    async def remote_drag(self, points):
+        self.remote.append(("drag", len(points)))
+
+    async def remote_type(self, text):
+        self.remote.append(("text", text))
+
+    async def remote_key(self, key):
+        self.remote.append(("key", key))
+
     async def close(self):
         pass
 
@@ -427,3 +445,42 @@ async def test_refused_update_is_not_retried_through_mirror(plugin, monkeypatch)
     with pytest.raises(plugin_main.updater.UpdateRefused):
         await plugin.run_update()
     assert calls == [""]
+
+
+async def test_remote_assist_endpoints(plugin):
+    plugin.client.remote = []
+    for body in (
+        {"type": "click", "x": 0.5, "y": 0.25},
+        {"type": "drag", "points": [[0.1, 0.2, 0], [0.4, 0.2, 120]]},
+        {"type": "text", "text": "123456"},
+        {"type": "key", "key": "Enter"},
+    ):
+        status, _ = await call_web(plugin.web_login_input, body)
+        assert status == 200, body
+    assert plugin.client.remote == [
+        ("click", 0.5, 0.25),
+        ("drag", 2),
+        ("text", "123456"),
+        ("key", "Enter"),
+    ]
+    status, body = await call_web(plugin.web_login_screen)
+    assert body["img"].startswith("data:image/jpeg;base64,")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"type": "click"},
+        {"type": "click", "x": "abc", "y": 1},
+        {"type": "drag", "points": [[0, 0, 0]]},
+        {"type": "drag", "points": "nope"},
+        {"type": "click", "x": 5, "y": 0.5},
+        {"type": "drag", "points": [[0, 0, 0], ["x", 1, 2]]},
+        {"type": "text", "text": "x" * 51},
+        {"type": "shell", "cmd": "rm -rf /"},
+    ],
+)
+async def test_remote_assist_rejects_bad_input(plugin, body):
+    plugin.client.remote = []
+    status, _ = await call_web(plugin.web_login_input, body)
+    assert status == 400
