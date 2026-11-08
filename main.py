@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import json
 import random
 import re
 import time
@@ -13,60 +12,13 @@ from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.api.web import error_response, json_response, request
 
-from .douyin_client import Comment, DouyinClient, DouyinError, NotLoggedIn, Video
-from .store import Store
+from .core import updater
+from .core.douyin_client import Comment, DouyinClient, DouyinError, NotLoggedIn, Video
+from .core.prompts import COMMENT_PROMPT, REPLY_PROMPT
+from .core.store import Store
+from .core.utils import in_active_hours, parse_json
 
 PLUGIN_NAME = "astrbot_plugin_douyin_ai"
-
-COMMENT_PROMPT = """你正在刷抖音，刷到了下面这个视频。请以你的人设决定要不要评论，以及评论什么。
-
-【视频作者】{author}
-【视频文案】{desc}
-【话题】{tags}
-【点赞数】{digg}
-【已有热门评论】
-{comments}
-
-要求：
-1. 评论要和视频内容相关，口语化、简短，像真人随手评论；不要复读热门评论。
-2. 如果视频内容看不懂、信息太少、是广告/引战/敏感话题，就不要评论。
-3. 不要编造自己的经历，不要留联系方式、链接或引流内容。
-只输出一个 JSON：{{"comment": true 或 false, "text": "评论内容", "reason": "一句话理由"}}"""
-
-REPLY_PROMPT = """你是抖音博主「{me}」，下面是你的作品下面的一条新评论，请决定是否回复以及回复内容。
-
-【你的作品文案】{desc}
-【评论者】{user}
-【评论内容】{text}
-
-要求：
-1. 回复要友好、自然、简短，像博主本人在回复粉丝。
-2. 如果评论是辱骂、广告、无意义内容（如纯表情、"1"），或你不确定怎么回答的事实性问题，就不要回复。
-3. 不要承诺任何你无法确认的事情（价格、发货、合作等）。
-只输出一个 JSON：{{"reply": true 或 false, "text": "回复内容", "reason": "一句话理由"}}"""
-
-
-def parse_json(text: str) -> dict:
-    text = (text or "").strip()
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        return {}
-    try:
-        return json.loads(m.group(0))
-    except Exception:
-        return {}
-
-
-def in_active_hours(spec: str, now: datetime | None = None) -> bool:
-    spec = (spec or "").strip()
-    if not spec:
-        return True
-    try:
-        a, b = (int(x) for x in spec.split("-", 1))
-    except ValueError:
-        return True
-    h = (now or datetime.now()).hour
-    return a <= h < b if a <= b else (h >= a or h < b)
 
 
 class DouyinAIPlugin(Star):
@@ -93,6 +45,16 @@ class DouyinAIPlugin(Star):
         self._login = {"status": "idle", "qr": "", "msg": ""}  # 网页扫码登录状态
         self._login_task: asyncio.Task | None = None
         self._profile_tried = 0.0
+        self._update = {
+            "current": updater.read_metadata().get("version", "0.0.0"),
+            "latest": "",
+            "has_update": False,
+            "notes": "",
+            "status": "idle",  # idle / checking / updating / error
+            "msg": "",
+            "checked_at": 0,
+        }
+        self._update_task: asyncio.Task | None = None
         for route, handler, methods in [
             ("state", self.web_state, ["GET"]),
             ("control", self.web_control, ["POST"]),
@@ -102,6 +64,8 @@ class DouyinAIPlugin(Star):
             ("login/cookie", self.web_login_cookie, ["POST"]),
             ("login/logout", self.web_logout, ["POST"]),
             ("settings", self.web_settings, ["POST"]),
+            ("update/check", self.web_update_check, ["POST"]),
+            ("update/run", self.web_update_run, ["POST"]),
         ]:
             context.register_web_api(
                 f"/{PLUGIN_NAME}/{route}", handler, methods, f"Douyin AI {route}"
@@ -353,6 +317,7 @@ class DouyinAIPlugin(Star):
         logger.info("[douyin] 自动运行已开始")
         self.event_log("▶️ 自动运行已开始")
         while self._running:
+            self._maybe_auto_check()
             try:
                 if in_active_hours(self.config.get("active_hours", "")):
                     now = time.time()
@@ -457,6 +422,73 @@ class DouyinAIPlugin(Star):
             self.event_log(f"🎉 抖音登录成功：{self.client.self_nickname}", "success")
         return ok
 
+    # ================================================================ 插件更新
+    async def check_update(self) -> dict:
+        """Check GitHub for a newer version and remember the result."""
+        self._update.update(status="checking", msg="正在检查更新…")
+        try:
+            info = await updater.check_latest()
+        except Exception as e:
+            self._update.update(
+                status="error", msg=f"检查更新失败：{e}", checked_at=int(time.time())
+            )
+            raise
+        self._update.update(
+            info,
+            status="idle",
+            msg="" if info["has_update"] else "已是最新版本",
+            checked_at=int(time.time()),
+        )
+        if (
+            info["has_update"]
+            and self.store.data.get("notified_version") != info["latest"]
+        ):
+            self.store.data["notified_version"] = info["latest"]
+            self.store.save()
+            await self.notify(
+                f"🆕 抖音 AI 助手有新版本 v{info['latest']}（当前 v{info['current']}），"
+                "可以在管理页面一键更新，或发送 /dy update"
+            )
+        return info
+
+    def _maybe_auto_check(self):
+        """Check for updates in the background at most every 6 hours."""
+        busy = self._update_task and not self._update_task.done()
+        if busy or time.time() - self._update["checked_at"] < 6 * 3600:
+            return
+        self._update["checked_at"] = int(time.time())  # avoid piling up retries
+
+        async def run():
+            try:
+                await self.check_update()
+            except Exception as e:
+                logger.info(f"[douyin] 自动检查更新失败: {e}")
+
+        self._update_task = asyncio.get_running_loop().create_task(run())
+
+    async def run_update(self):
+        """Download the latest version and reload the plugin via AstrBot."""
+        manager = getattr(self.context, "_star_manager", None)
+        if manager is None:
+            raise DouyinError("当前 AstrBot 版本不支持插件自更新，请在插件页面手动更新")
+        target = self._update.get("latest") or "最新版"
+        self._update.update(status="updating", msg=f"正在下载 v{target}…")
+        self.event_log(f"⬇️ 开始更新到 v{target}")
+        try:
+            try:
+                await manager.update_plugin(PLUGIN_NAME)
+            except Exception as e:
+                logger.warning(f"[douyin] 直接下载失败，改用加速镜像: {e}")
+                self._update["msg"] = "直连 GitHub 失败，正在通过镜像下载…"
+                await manager.update_plugin(PLUGIN_NAME, proxy=updater.DOWNLOAD_MIRROR)
+        except Exception as e:
+            self._update.update(status="error", msg=f"更新失败：{e}")
+            await self.notify(f"❌ 插件更新失败：{e}")
+            raise
+        # The plugin has been reloaded at this point; this (old) instance is retired.
+        self._update.update(status="idle", msg="更新完成")
+        await self.notify(f"✅ 抖音 AI 助手已更新到 v{target}")
+
     # ================================================================ 可视化页面 API
     async def web_state(self):
         try:
@@ -477,9 +509,11 @@ class DouyinAIPlugin(Star):
                     await self.client.fetch_self()
             except Exception:
                 pass
+        self._maybe_auto_check()
         b, r = self.config.get("browse", {}), self.config.get("reply", {})
         return json_response(
             {
+                "update": self._update,
                 "logged_in": logged,
                 "nickname": self.client.self_nickname,
                 "running": self.loop_running,
@@ -603,6 +637,30 @@ class DouyinAIPlugin(Star):
         self._login = {"status": "idle", "qr": "", "msg": ""}
         self.event_log("👋 已退出抖音登录")
         return json_response({"message": "已退出登录"})
+
+    async def web_update_check(self):
+        try:
+            info = await self.check_update()
+        except Exception as e:
+            return error_response(f"检查更新失败：{e}", status_code=502)
+        msg = f"发现新版本 v{info['latest']}" if info["has_update"] else "已是最新版本"
+        return json_response({"message": msg, **info})
+
+    async def web_update_run(self):
+        if self._update["status"] == "updating":
+            return json_response({"message": "正在更新中"})
+        if not self._update.get("has_update"):
+            return error_response("已是最新版本，无需更新", status_code=400)
+
+        async def run():
+            try:
+                await self.run_update()
+            except Exception:
+                logger.exception("[douyin] 插件更新失败")
+
+        # Keep a reference so the task is not garbage-collected mid-update
+        self._update_task = asyncio.get_running_loop().create_task(run())
+        return json_response({"message": "开始更新，完成后页面会自动刷新"})
 
     async def web_settings(self):
         body = await request.json(default={})
@@ -792,7 +850,7 @@ class DouyinAIPlugin(Star):
     @dy.command("ok")
     async def cmd_ok(self, event: AstrMessageEvent):
         """确认发送待审核内容：/dy ok 编号 [修改后的内容]"""
-        m = re.search(r"ok\s+(\d+)\s*(.*)$", event.message_str.strip(), re.S)
+        m = re.search(r"ok\s+(\d+)\s*(.*)$", event.message_str.strip(), re.DOTALL)
         if not m:
             yield event.plain_result("用法：/dy ok 编号 [修改后的内容]")
             return
@@ -817,6 +875,28 @@ class DouyinAIPlugin(Star):
             yield event.plain_result(
                 "已清空待审核列表" if arg == "all" else f"已放弃 #{arg}"
             )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @dy.command("update")
+    async def cmd_update(self, event: AstrMessageEvent):
+        """检查并更新插件：/dy update"""
+        self._bind_if_empty(event)
+        try:
+            info = await self.check_update()
+        except Exception as e:
+            yield event.plain_result(f"检查更新失败：{e}")
+            return
+        if not info["has_update"]:
+            yield event.plain_result(f"已是最新版本 v{info['current']} ✅")
+            return
+        notes = f"\n\n更新内容：\n{info['notes'][:800]}" if info["notes"] else ""
+        yield event.plain_result(
+            f"发现新版本 v{info['latest']}（当前 v{info['current']}），开始更新…{notes}"
+        )
+        try:
+            await self.run_update()
+        except Exception as e:
+            yield event.plain_result(f"❌ 更新失败：{e}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @dy.command("history")

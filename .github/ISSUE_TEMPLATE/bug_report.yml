@@ -1,0 +1,43 @@
+name: 问题反馈
+description: 插件出错或者行为不对
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 你做了什么操作，看到了什么结果，期望是什么。
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 报错信息 / 日志
+      description: 管理页面上的错误提示，或 AstrBot 日志里带 [douyin] 的内容。请删掉 Cookie 等隐私信息。
+      render: text
+  - type: input
+    id: plugin_version
+    attributes:
+      label: 插件版本
+      description: 管理页面标题旁边显示的版本号，例如 v0.3.0
+    validations:
+      required: true
+  - type: input
+    id: astrbot_version
+    attributes:
+      label: AstrBot 版本
+      description: 管理面板左下角显示的版本号
+    validations:
+      required: true
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: 部署方式
+      options:
+        - Docker
+        - 宝塔 / 1Panel 等面板
+        - 直接运行（源码 / pip）
+        - Windows 一键包
+        - 其他
+    validations:
+      required: true

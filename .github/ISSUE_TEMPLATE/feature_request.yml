@@ -1,0 +1,14 @@
+name: 功能建议
+description: 想让插件增加或改进什么
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你希望插件能做什么
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: 为什么需要它 / 使用场景

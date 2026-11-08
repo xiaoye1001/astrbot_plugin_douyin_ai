@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag matches metadata.yaml
+        run: |
+          version=$(sed -n 's/^version: *//p' metadata.yaml)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match metadata.yaml version $version"
+            exit 1
+          fi
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '
+            /^## \[/ { if (found) exit; if (index($0, "[" v "]")) { found=1; next } }
+            /^\[[0-9]/ { next }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          cat notes.md
+      - name: Build plugin zip
+        run: git archive --format=zip --prefix=astrbot_plugin_douyin_ai/ -o astrbot_plugin_douyin_ai-${GITHUB_REF_NAME}.zip HEAD
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md astrbot_plugin_douyin_ai-*.zip

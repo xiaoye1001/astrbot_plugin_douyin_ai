@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+      - name: Check plugin files
+        run: |
+          python -m json.tool _conf_schema.json > /dev/null
+          python -m json.tool .astrbot-plugin/i18n/zh-CN.json > /dev/null
+          python -m json.tool .astrbot-plugin/i18n/en-US.json > /dev/null
+          test -f views/dashboard/index.html
+          node --check views/dashboard/app.js 2>/dev/null || node -e "new Function(require('fs').readFileSync('views/dashboard/app.js','utf8').replace(/^await .*$/gm,''))"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin
+      - uses: actions/checkout@v4
+        with:
+          repository: AstrBotDevs/AstrBot
+          path: AstrBot
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            AstrBot/requirements.txt
+            plugin/requirements.txt
+      - name: Install dependencies
+        run: |
+          pip install -r AstrBot/requirements.txt -r plugin/requirements.txt pytest pytest-asyncio
+          python -m playwright install --with-deps chromium
+      - name: Run tests
+        working-directory: plugin
+        env:
+          ASTRBOT_ROOT: ${{ github.workspace }}/AstrBot
+        run: pytest -v

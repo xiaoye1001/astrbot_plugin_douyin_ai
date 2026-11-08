@@ -5,6 +5,7 @@ let state = null;
 let settingsLoaded = false;
 let settingsDirty = false;
 let pollTimer = null;
+let loadedVersion = null; // version when the page was opened; reload page after an update
 const drafts = {}; // id -> edited text, survives re-render and failed sends
 
 // ---------------------------------------------------------------- helpers
@@ -119,6 +120,7 @@ function render() {
   renderEvents();
   renderHistory();
   renderAccount();
+  renderUpdate();
   if (!settingsLoaded || !settingsDirty) fillSettings();
 }
 
@@ -226,6 +228,54 @@ function renderAccount() {
   loginBtn.textContent = inProgress ? "等待扫码…" : lg.status === "timeout" || lg.status === "error" ? "重新获取二维码" : "获取登录二维码";
 }
 
+function renderUpdate() {
+  const u = state.update || {};
+  // The plugin was reloaded with a new version: reload this page to get new assets too
+  if (loadedVersion && u.current && u.current !== loadedVersion) {
+    toast(`✅ 已更新到 v${u.current}，正在刷新页面…`);
+    loadedVersion = u.current;
+    setTimeout(() => location.reload(), 1500);
+    return;
+  }
+  loadedVersion ??= u.current;
+
+  $("ver").textContent = u.current ? `v${u.current}` : "";
+  $("u-current").textContent = u.current ? `v${u.current}` : "—";
+  const latest = $("u-latest");
+  latest.textContent = u.latest ? `v${u.latest}` : "—";
+  latest.classList.toggle("new", !!u.has_update);
+
+  const updating = u.status === "updating";
+  const checking = u.status === "checking";
+  $("update-banner").classList.toggle("hidden", !u.has_update);
+  $("update-banner-text").textContent = updating
+    ? `⏳ ${u.msg || "正在更新…"}`
+    : `🆕 发现新版本 v${u.latest}（当前 v${u.current}）`;
+  $("update-badge").classList.toggle("hidden", !u.has_update);
+
+  for (const id of ["btn-update-run", "btn-update-banner"]) {
+    const b = $(id);
+    b.disabled = updating;
+    b.textContent = updating ? "更新中…" : "立即更新";
+  }
+  $("btn-update-run").classList.toggle("hidden", !u.has_update);
+  $("btn-update-check").disabled = checking || updating;
+
+  const st = $("u-status");
+  st.className = "update-status" + (u.status === "error" ? " error" : updating || checking ? " busy" : "");
+  st.textContent = u.msg
+    ? u.msg + (u.checked_at && !updating && !checking ? `（检查于 ${fmtTime(u.checked_at)}）` : "")
+    : u.checked_at ? `上次检查：${fmtTime(u.checked_at)}` : "";
+
+  $("u-notes-wrap").classList.toggle("hidden", !(u.has_update && u.notes));
+  $("u-notes").textContent = u.notes || "";
+  const repo = $("u-repo");
+  if (u.repo) {
+    repo.href = u.repo;
+    repo.textContent = u.repo.replace(/^https?:\/\//, "");
+  }
+}
+
 // ---------------------------------------------------------------- settings
 const form = $("settings-form");
 
@@ -276,6 +326,13 @@ $("quick-review").addEventListener("change", (e) => call("settings", { review_mo
 $("btn-reject-all").addEventListener("click", (e) => {
   if (confirm(`确定放弃全部 ${state.pending.length} 条待审核内容吗？`)) call("pending/reject", { id: "all" }, e.currentTarget);
 });
+$("btn-update-check").addEventListener("click", (e) => call("update/check", {}, e.currentTarget));
+for (const id of ["btn-update-run", "btn-update-banner"]) {
+  $(id).addEventListener("click", (e) => {
+    const u = state.update;
+    if (confirm(`更新到 v${u.latest}？更新期间插件会重载，大约需要几十秒。`)) call("update/run", {}, e.currentTarget);
+  });
+}
 $("btn-login").addEventListener("click", (e) => call("login/start", {}, e.currentTarget));
 $("btn-cookie").addEventListener("click", async (e) => {
   const cookie = $("cookie-input").value.trim();
@@ -300,7 +357,11 @@ async function refresh() {
 function schedule() {
   clearTimeout(pollTimer);
   // 扫码或执行任务时刷新快一些
-  const fast = state && (state.busy || ["loading", "qr"].includes(state.login?.status));
+  const fast =
+    state &&
+    (state.busy ||
+      ["loading", "qr"].includes(state.login?.status) ||
+      ["checking", "updating"].includes(state.update?.status));
   pollTimer = setTimeout(async () => {
     if (!document.hidden) await refresh();
     schedule();

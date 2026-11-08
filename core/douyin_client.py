@@ -416,7 +416,7 @@ class DouyinClient:
             await page.wait_for_timeout(5000)
             # 关掉可能出现的弹窗，之后用方向键切换视频
             await page.keyboard.press("Escape")
-            for i in range(count):
+            for _ in range(count):
                 if should_stop and should_stop():
                     break
                 lo, hi = watch_range

@@ -1,70 +1,180 @@
-# 抖音 AI 助手 (astrbot_plugin_douyin_ai)
+<div align="center">
 
-让 AstrBot 里的 AI 登录你的抖音账号：
+<img src="logo.png" width="96" alt="logo" />
+
+# 抖音 AI 助手
+
+**AstrBot 插件：让 AI 自己刷抖音、发评论、回复评论**
+
+[![CI](https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/xiaoye1001/astrbot_plugin_douyin_ai)](https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases)
+[![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.29.0-blue)](https://github.com/AstrBotDevs/AstrBot)
+[![License](https://img.shields.io/github/license/xiaoye1001/astrbot_plugin_douyin_ai)](LICENSE)
+
+</div>
+
+## 功能
 
 - 🎬 **自己刷视频**：在推荐页一个个往下刷，每个视频随机停留一会儿
 - ✍️ **自己评论**：读视频文案、话题和热门评论，由 AI 按你设定的人设决定评不评、评什么
 - 💬 **自己回复评论**：定时检查你最近作品下的新评论，AI 以博主身份回复
-- 🛡️ **人工审核模式（默认开启）**：AI 生成的内容先推送给你，确认后才发出
-- ⏱️ 每日上限、两次发言最小间隔、活跃时间段，避免刷屏
+- 🛡️ **人工审核（默认开启）**：AI 写好的内容先给你看，确认或修改后才发出
+- ⏱️ **防刷屏**：每日上限、两次发言最小间隔、活跃时间段
+- 🖥️ **可视化管理页面**：在 AstrBot 管理面板里查看状态、审核内容、修改设置、扫码登录
+- 🆕 **一键更新**：自动检查新版本，在页面上点一下就能更新
+
+![管理页面截图](docs/dashboard.png)
 
 ## 安装
 
-1. 把本目录放到 `AstrBot/data/plugins/` 下（或在 WebUI 里通过仓库地址安装）。
-2. 浏览器会在第一次使用时**自动下载**（约 1~5 分钟，下载慢时会自动换国内镜像），期间页面会提示“正在自动下载浏览器”，稍等后刷新即可。
+需要 **AstrBot v4.29.0 及以上**。
 
-   如果自动下载失败，可以在 AstrBot 所在环境手动执行（Docker 部署要先进入容器）：
+1. 在 AstrBot 管理面板 → 插件 → 安装插件，填入仓库地址：
+
+   ```text
+   https://github.com/xiaoye1001/astrbot_plugin_douyin_ai
+   ```
+
+2. 安装完成后，左侧菜单会出现「**抖音 AI 管理**」。
+3. 浏览器（Chromium）会在第一次使用时**自动下载**，大约需要 1~5 分钟，下载慢时会自动改用国内镜像。
+
+<details>
+<summary>自动下载浏览器失败怎么办？</summary>
+
+在 AstrBot 所在环境手动执行下面的命令，然后重载插件（Docker 部署要先进入容器，例如 `docker exec -it astrbot bash`）：
 
 ```bash
 python -m playwright install --with-deps chromium
 ```
 
-3. 在 WebUI → 插件 → 抖音 AI 助手 → 配置里，设置人设、使用的模型等。
+</details>
+
+## 快速上手
+
+1. 打开「抖音 AI 管理」→「账号」，点「获取登录二维码」，用抖音 App 扫码。
+2. 回到「待审核」，点「立即刷一轮」，看看 AI 写的评论效果。
+3. 在「设置」里调整人设、频率和每日上限。
+4. 满意后点「开始自动运行」。
 
 ## 管理页面
 
-在 AstrBot 网页管理面板的左侧菜单点「**抖音 AI 管理**」即可打开（也可以在 插件 → 抖音 AI 助手 详情页里找到）。在这里可以：
+| 标签页 | 作用 |
+| --- | --- |
+| 待审核 | AI 写好的评论和回复，可以直接改文字再发送，或放弃 |
+| 动态 | AI 最近做了什么、有没有出错 |
+| 已发送 | 已经发出的评论和回复 |
+| 设置 | 人设、刷视频 / 回复频率、每日上限、活跃时间段、评论后缀 |
+| 账号 | 扫码登录、导入 Cookie、退出登录 |
+| 关于与更新 | 当前版本、检查更新、查看更新内容、一键更新 |
 
-- 📊 查看今日评论 / 回复数量、运行状态、最近错误
-- ▶️ 一键开始 / 停止自动运行，立即刷一轮视频或检查评论
-- ✅ 审核 AI 写好的内容：直接修改文字后点「发送」，或「放弃」
-- 📜 查看实时动态和已发送记录
-- ⚙️ 修改人设、频率、每日上限、活跃时间段
-- 🔑 扫码登录（二维码直接显示在页面上）、导入 Cookie、退出登录
-
-![管理页面截图](docs/dashboard.png)
+模型选择、无头模式、页面选择器等高级选项在 插件 → 抖音 AI 助手 → 配置 里修改。
 
 ## 指令
 
-除了管理页面，也可以在聊天里用指令操作。
-
-所有指令仅管理员可用。
+也可以在聊天里用指令操作，所有指令仅 AstrBot 管理员可用。
 
 | 指令 | 作用 |
 | --- | --- |
 | `/dy login` | 发送登录二维码，用抖音 App 扫码登录 |
-| `/dy cookie <cookie>` | 扫码不方便时，导入电脑浏览器里复制的 Cookie |
-| `/dy bind` | 把审核/通知消息发到当前会话（第一次使用任意 /dy 指令会自动绑定） |
+| `/dy cookie <cookie>` | 导入电脑浏览器里复制的 Cookie 登录 |
+| `/dy bind` | 把审核 / 通知消息发到当前会话（第一次使用任意 `/dy` 指令会自动绑定） |
 | `/dy start` / `/dy stop` | 开始 / 停止自动运行 |
 | `/dy browse` | 立即刷一轮视频 |
 | `/dy reply` | 立即检查一轮作品评论 |
 | `/dy pending` | 查看待审核内容 |
-| `/dy ok 3` | 确认发送 #3；`/dy ok 3 新内容` 改完再发 |
+| `/dy ok 3` | 发送 #3；`/dy ok 3 新内容` 改完再发 |
 | `/dy no 3` / `/dy no all` | 放弃 #3 / 全部放弃 |
 | `/dy status` | 查看登录、运行状态和今日计数 |
 | `/dy history` | 查看最近发出的内容 |
+| `/dy update` | 检查并更新插件 |
 
-推荐流程：打开管理页面扫码登录 → 点「立即刷一轮」看看 AI 写的评论 → 在「设置」里调整人设 → 点「开始自动运行」。
+## 更新
 
-## 工作原理
+- 插件每 6 小时自动检查一次新版本，有新版本时管理页面顶部会提示，绑定的会话也会收到消息。
+- 在「关于与更新」里点「立即更新」，或发送 `/dy update`。连不上 GitHub 时会自动改用加速镜像。
+- 更新后插件自动重载，登录状态、设置和记录都会保留。
+- 也可以照常在 AstrBot 的插件页面点「更新」。
 
-- 使用 Playwright 驱动一个真实的 Chromium，登录态保存在 `data/plugin_data/astrbot_plugin_douyin_ai/browser_profile/`。
-- 视频和评论数据通过监听抖音网页自己请求的接口获取，不解析页面结构。
-- 发评论 / 回复靠模拟点击和输入完成，是否成功以抖音接口的返回为准。
+每个版本的变化见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 常见问题
+
+**提示「找不到评论输入框」/「找不到回复按钮」**
+抖音网页改版了。在插件配置的「页面选择器」里修改对应的选择器（多个用 `||` 分隔，按顺序尝试），或者[提交问题](https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/issues/new/choose)。
+
+**扫码后要求短信验证 / 弹出验证码**
+插件不会绕过验证码。可以改用「导入 Cookie」：在电脑浏览器登录抖音网页版，按 F12 → 网络（Network）→ 任意请求 → 复制请求头里的 Cookie。
+
+**想看看浏览器在做什么**
+在有桌面的电脑上运行 AstrBot 时，可以在插件配置里关闭「无头模式」。
 
 ## 注意事项
 
-- **账号风险**：抖音用户协议不允许用自动化程序操作账号，使用本插件可能触发风控、验证码，甚至被限流或封号。请用自己的账号、保持较低频率，风险自负。
-- 插件**不会**绕过验证码或风控。遇到验证码时操作会失败，可以关闭 `无头模式`，在有桌面的电脑上手动处理。
+- **账号风险**：抖音用户协议不允许用自动化程序操作账号，使用本插件可能触发风控、验证码，甚至被限流或封号。请保持较低频率，风险自负。
 - 请勿用于批量引流、刷评论、发广告或冒充他人。建议在「评论后缀」里注明内容由 AI 生成。
-- 抖音网页经常改版。如果出现「找不到评论输入框」之类的错误，可以在配置「页面选择器」中修改；多个选择器用 `||` 分隔，按顺序尝试。
+
+## 开发
+
+<details>
+<summary>目录结构</summary>
+
+```text
+astrbot_plugin_douyin_ai/
+├── main.py                # 插件入口：指令、后台任务、管理页面接口
+├── metadata.yaml          # 插件信息（名称、版本、仓库、最低 AstrBot 版本）
+├── _conf_schema.json      # 插件配置项
+├── requirements.txt       # 运行依赖
+├── logo.png               # 插件图标
+├── core/
+│   ├── douyin_client.py   # 浏览器自动化（Playwright）
+│   ├── store.py           # 本地状态：待审核、去重、每日计数
+│   ├── updater.py         # 检查新版本
+│   ├── prompts.py         # 给大模型的提示词
+│   └── utils.py
+├── views/dashboard/       # 管理页面（HTML / CSS / JS）
+├── .astrbot-plugin/i18n/  # 管理页面标题等多语言文本
+├── tests/                 # 自动化测试
+└── .github/               # CI、发布流程、Issue 模板
+```
+
+</details>
+
+运行测试需要一份 AstrBot 源码：
+
+```bash
+git clone https://github.com/AstrBotDevs/AstrBot ../AstrBot
+```
+
+```bash
+pip install -r ../AstrBot/requirements.txt -r requirements.txt pytest pytest-asyncio ruff
+```
+
+```bash
+python -m playwright install chromium
+```
+
+```bash
+ASTRBOT_ROOT=../AstrBot pytest
+```
+
+代码风格检查：
+
+```bash
+ruff check . && ruff format --check .
+```
+
+### 发布新版本
+
+1. 修改 `metadata.yaml` 和 `pyproject.toml` 里的 `version`，在 `CHANGELOG.md` 顶部写上这个版本的变化。
+2. 提交并推送到 `main`。
+3. 打标签并推送，GitHub Actions 会自动创建 Release：
+
+```bash
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+推送到 `main` 后，已安装插件的用户就能在管理页面看到更新提示。
+
+## 许可证
+
+[AGPL-3.0](LICENSE)，与 AstrBot 保持一致。

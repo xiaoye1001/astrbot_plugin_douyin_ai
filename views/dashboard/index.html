@@ -12,7 +12,7 @@
         <div class="brand">
           <div class="logo" aria-hidden="true">♪</div>
           <div>
-            <h1>抖音 AI 助手</h1>
+            <h1>抖音 AI 助手 <span class="ver" id="ver"></span></h1>
             <div class="sub" id="account-line">正在加载…</div>
           </div>
         </div>
@@ -24,6 +24,13 @@
         <button class="btn small primary" data-goto="account">去登录</button>
       </div>
       <div class="banner error hidden" id="error-banner"></div>
+      <div class="banner info hidden" id="update-banner">
+        <span id="update-banner-text"></span>
+        <span class="banner-actions">
+          <button class="btn small ghost" data-goto="about">查看更新内容</button>
+          <button class="btn small primary" id="btn-update-banner">立即更新</button>
+        </span>
+      </div>
 
       <section class="stats">
         <div class="stat">
@@ -65,6 +72,7 @@
         <button class="tab" data-tab="history">已发送</button>
         <button class="tab" data-tab="settings">设置</button>
         <button class="tab" data-tab="account">账号</button>
+        <button class="tab" data-tab="about">关于与更新 <span class="badge hidden" id="update-badge">新</span></button>
       </nav>
 
       <!-- 待审核 -->
@@ -168,6 +176,37 @@
             <textarea id="cookie-input" rows="5" placeholder="sessionid=xxx; ttwid=xxx; ..."></textarea>
             <button class="btn block" id="btn-cookie">导入 Cookie</button>
           </div>
+        </div>
+      </section>
+
+      <!-- 关于与更新 -->
+      <section class="panel hidden" data-panel="about">
+        <div class="about-card">
+          <div class="about-row">
+            <div>
+              <div class="about-label">当前版本</div>
+              <div class="about-value" id="u-current">—</div>
+            </div>
+            <div>
+              <div class="about-label">最新版本</div>
+              <div class="about-value" id="u-latest">—</div>
+            </div>
+            <div class="about-actions">
+              <button class="btn" id="btn-update-check">检查更新</button>
+              <button class="btn primary hidden" id="btn-update-run">立即更新</button>
+            </div>
+          </div>
+          <div class="update-status" id="u-status"></div>
+          <div class="notes hidden" id="u-notes-wrap">
+            <div class="about-label">更新内容</div>
+            <pre class="notes-text" id="u-notes"></pre>
+          </div>
+          <p class="muted small-note">
+            更新会从 GitHub 下载最新代码（连不上时自动改用加速镜像），完成后插件自动重载，你的登录状态、设置和记录都会保留。插件每 6 小时会自动检查一次新版本。
+          </p>
+          <p class="muted small-note">
+            项目主页：<a id="u-repo" target="_blank" rel="noopener"></a>
+          </p>
         </div>
       </section>
     </div>

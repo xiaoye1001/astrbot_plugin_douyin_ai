@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.png binary
+
+# Not needed at runtime: keep them out of the archive AstrBot downloads
+/tests export-ignore
+/.github export-ignore
+/docs export-ignore
+/pyproject.toml export-ignore
+/.editorconfig export-ignore
+/.gitattributes export-ignore

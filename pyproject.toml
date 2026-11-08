@@ -1,0 +1,35 @@
+# Development tooling only. AstrBot loads this plugin from main.py / metadata.yaml;
+# runtime dependencies live in requirements.txt.
+[project]
+name = "astrbot_plugin_douyin_ai"
+version = "0.3.0"
+description = "AstrBot 插件：让 AI 自动刷抖音、评论、回复评论"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "AGPL-3.0-or-later" }
+dependencies = ["playwright>=1.40"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+extend-exclude = ["views"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "ASYNC"]
+ignore = [
+  "E501",   # long Chinese strings are fine
+  "B008",
+  "SIM105", # explicit try/except/pass reads clearer here
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["astrbot", "data"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = ["browser: needs a Chromium browser (playwright)"]
