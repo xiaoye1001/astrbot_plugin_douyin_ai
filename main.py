@@ -14,9 +14,9 @@ from astrbot.api.web import error_response, json_response, request
 
 from .core import updater
 from .core.douyin_client import Comment, DouyinClient, DouyinError, NotLoggedIn, Video
-from .core.prompts import COMMENT_PROMPT, REPLY_PROMPT
+from .core.prompts import COMMENT_PROMPT, REPLY_PROMPT, quote
 from .core.store import Store
-from .core.utils import in_active_hours, parse_json
+from .core.utils import clean_output, in_active_hours, parse_json
 
 PLUGIN_NAME = "astrbot_plugin_douyin_ai"
 
@@ -119,9 +119,25 @@ class DouyinAIPlugin(Star):
         return resp.completion_text or ""
 
     def _finalize_text(self, text: str) -> str:
-        text = (text or "").strip().strip('"“”')
+        """Admin-written text: one line + signature (no content filtering)."""
+        text = re.sub(r"\s*[\r\n]+\s*", " ", text or "").strip()
         sig = self.config.get("signature", "")
         return f"{text}{sig}" if sig else text
+
+    def _ai_text(self, decision: dict, key: str) -> str:
+        """Validated AI text plus signature, or "" if it must not be posted."""
+        if not decision.get(key):
+            return ""
+        raw = str(decision.get("text") or "")
+        text = clean_output(raw)
+        if raw.strip() and not text:
+            self.event_log(
+                f"🛡️ 已丢弃一条可疑的 AI 输出（含链接/联系方式/过长）：{raw[:60]}",
+                "error",
+            )
+            logger.warning(f"[douyin] dropped unsafe AI output: {raw[:200]}")
+            return ""
+        return self._finalize_text(text) if text else ""
 
     async def _respect_gap(self):
         gap = int(self.config.get("min_action_gap_seconds", 90))
@@ -133,20 +149,20 @@ class DouyinAIPlugin(Star):
     async def decide_comment(self, video: Video, comments: list[Comment]) -> dict:
         top = sorted(comments, key=lambda c: c.digg_count, reverse=True)[:8]
         prompt = COMMENT_PROMPT.format(
-            author=video.author or "未知",
-            desc=video.desc or "（无文案）",
-            tags="、".join(video.tags) or "无",
+            author=quote(video.author, 40) or "未知",
+            desc=quote(video.desc) or "（无文案）",
+            tags=quote("、".join(video.tags), 100) or "无",
             digg=video.digg_count,
-            comments="\n".join(f"- {c.text}" for c in top) or "（暂无）",
+            comments="\n".join(f"- {quote(c.text, 150)}" for c in top) or "（暂无）",
         )
         return parse_json(await self.llm(prompt))
 
     async def decide_reply(self, desc: str, c: Comment) -> dict:
         prompt = REPLY_PROMPT.format(
-            me=self.client.self_nickname or "我",
-            desc=desc or "（无文案）",
-            user=c.user or "网友",
-            text=c.text,
+            me=quote(self.client.self_nickname, 40) or "我",
+            desc=quote(desc) or "（无文案）",
+            user=quote(c.user, 40) or "网友",
+            text=quote(c.text),
         )
         return parse_json(await self.llm(prompt))
 
@@ -177,9 +193,13 @@ class DouyinAIPlugin(Star):
         cap = int(cfg.get("max_comments_per_day", 10))
         review = self.config.get("review_mode", True)
         skip_kw = [k for k in cfg.get("skip_keywords", []) if k]
-        watch = (
-            int(cfg.get("watch_seconds_min", 6)),
-            int(cfg.get("watch_seconds_max", 25)),
+        watch = tuple(
+            sorted(
+                (
+                    max(0, int(cfg.get("watch_seconds_min", 6))),
+                    max(0, int(cfg.get("watch_seconds_max", 25))),
+                )
+            )
         )
         prob = float(cfg.get("comment_probability", 0.3))
 
@@ -191,7 +211,11 @@ class DouyinAIPlugin(Star):
             )
         made = 0
         for v in videos:
-            if self.store.count_today("comments") >= cap:
+            # pending ones count too, so review mode can't pile up past the cap
+            if (
+                self.store.count_today("comments") + self.store.count_pending("comment")
+                >= cap
+            ):
                 break
             if self.store.has_commented(v.aweme_id) or self.store.has_pending_for(
                 "aweme_id", v.aweme_id
@@ -205,10 +229,11 @@ class DouyinAIPlugin(Star):
                 page, detail, comments = await self.client.open_video(v.aweme_id)
                 try:
                     await page.wait_for_timeout(random.randint(*watch) * 1000)
-                    d = await self.decide_comment(detail or v, comments)
-                    if not d.get("comment") or not d.get("text"):
+                    text = self._ai_text(
+                        await self.decide_comment(detail or v, comments), "comment"
+                    )
+                    if not text:
                         continue
-                    text = self._finalize_text(d["text"])
                     if review:
                         pid = self.store.add_pending(
                             {
@@ -244,14 +269,18 @@ class DouyinAIPlugin(Star):
         if not posts:
             return "没有获取到你的作品（账号还没发过视频，或页面加载失败）"
         made = 0
+
+        def used():
+            return self.store.count_today("replies") + self.store.count_pending("reply")
+
         for post in posts:
-            if self.store.count_today("replies") >= cap:
+            if used() >= cap:
                 break
             async with self.client.lock:
                 page, _, comments = await self.client.open_video(post.aweme_id)
                 try:
                     for c in comments:
-                        if self.store.count_today("replies") >= cap:
+                        if used() >= cap:
                             break
                         if self.store.is_handled(c.cid) or self.store.has_pending_for(
                             "cid", c.cid
@@ -268,11 +297,12 @@ class DouyinAIPlugin(Star):
                         if not c.text.strip() or any(k in c.text for k in ignore_kw):
                             self.store.mark_handled(c.cid)
                             continue
-                        d = await self.decide_reply(post.desc, c)
-                        if not d.get("reply") or not d.get("text"):
+                        text = self._ai_text(
+                            await self.decide_reply(post.desc, c), "reply"
+                        )
+                        if not text:
                             self.store.mark_handled(c.cid)
                             continue
-                        text = self._finalize_text(d["text"])
                         if review:
                             pid = self.store.add_pending(
                                 {
@@ -427,7 +457,7 @@ class DouyinAIPlugin(Star):
         """Check GitHub for a newer version and remember the result."""
         self._update.update(status="checking", msg="正在检查更新…")
         try:
-            info = await updater.check_latest()
+            info = await updater.check_latest(self._mirror())
         except Exception as e:
             self._update.update(
                 status="error", msg=f"检查更新失败：{e}", checked_at=int(time.time())
@@ -466,6 +496,10 @@ class DouyinAIPlugin(Star):
 
         self._update_task = asyncio.get_running_loop().create_task(run())
 
+    def _mirror(self) -> str:
+        m = str(self.config.get("github_mirror", updater.DOWNLOAD_MIRROR) or "").strip()
+        return m if m.startswith("https://") else ""
+
     async def run_update(self):
         """Download the latest version and reload the plugin via AstrBot."""
         manager = getattr(self.context, "_star_manager", None)
@@ -474,13 +508,16 @@ class DouyinAIPlugin(Star):
         target = self._update.get("latest") or "最新版"
         self._update.update(status="updating", msg=f"正在下载 v{target}…")
         self.event_log(f"⬇️ 开始更新到 v{target}")
+        mirror = self._mirror()
         try:
             try:
                 await manager.update_plugin(PLUGIN_NAME)
             except Exception as e:
-                logger.warning(f"[douyin] 直接下载失败，改用加速镜像: {e}")
+                if not mirror:
+                    raise
+                logger.warning(f"[douyin] 直接下载失败，改用加速镜像 {mirror}: {e}")
                 self._update["msg"] = "直连 GitHub 失败，正在通过镜像下载…"
-                await manager.update_plugin(PLUGIN_NAME, proxy=updater.DOWNLOAD_MIRROR)
+                await manager.update_plugin(PLUGIN_NAME, proxy=mirror)
         except Exception as e:
             self._update.update(status="error", msg=f"更新失败：{e}")
             await self.notify(f"❌ 插件更新失败：{e}")
@@ -622,8 +659,13 @@ class DouyinAIPlugin(Star):
             return error_response(
                 "Cookie 格式不对，应为 name=value; name2=value2", status_code=400
             )
-        n = await self.client.import_cookies(raw)
-        if not await self.client.is_logged_in():
+        try:
+            n = await self.client.import_cookies(raw)
+            logged = await self.client.is_logged_in()
+        except Exception as e:
+            msg = (str(e).splitlines() or [type(e).__name__])[0]
+            return error_response(f"导入失败：{msg}", status_code=400)
+        if not logged:
             return error_response(
                 f"导入了 {n} 个 Cookie，但没有检测到登录信息（sessionid）",
                 status_code=400,
@@ -685,9 +727,24 @@ class DouyinAIPlugin(Star):
         except (TypeError, ValueError):
             return error_response("设置的数值格式不对", status_code=400)
         hours = self.config.get("active_hours", "").strip()
-        if hours and not re.fullmatch(r"\d{1,2}-\d{1,2}", hours):
-            return error_response("活跃时间格式应为 9-23 这样", status_code=400)
-        b["comment_probability"] = min(max(b.get("comment_probability", 0.3), 0), 1)
+        m = re.fullmatch(r"(\d{1,2})-(\d{1,2})", hours)
+        if hours and not (m and int(m[1]) <= 24 and int(m[2]) <= 24):
+            return error_response(
+                "活跃时间格式应为 9-23 这样（0~24 点）", status_code=400
+            )
+        # Keep values in sane ranges so a typo can't make the bot spam
+        clamp = [
+            (b, "interval_minutes", 10, 1440),
+            (r, "interval_minutes", 5, 1440),
+            (b, "max_comments_per_day", 0, 200),
+            (r, "max_replies_per_day", 0, 500),
+            (b, "comment_probability", 0.0, 1.0),
+        ]
+        for target, field, lo, hi in clamp:
+            if field in target:
+                target[field] = min(max(target[field], lo), hi)
+        self.config["persona"] = str(self.config.get("persona", ""))[:2000]
+        self.config["signature"] = str(self.config.get("signature", ""))[:30]
         self.config.save_config()
         self.event_log("⚙️ 设置已保存")
         return json_response({"message": "设置已保存"})
@@ -742,14 +799,24 @@ class DouyinAIPlugin(Star):
     async def cmd_cookie(self, event: AstrMessageEvent):
         """导入浏览器 Cookie 登录：/dy cookie <cookie字符串>"""
         self._bind_if_empty(event)
+        if not event.is_private_chat():
+            yield event.plain_result(
+                "⚠️ Cookie 相当于你的抖音登录密码，不要在群里发！请撤回刚才的消息，"
+                "改为私聊机器人发送，或在 AstrBot 管理面板的「抖音 AI 管理 → 账号」里导入。"
+            )
+            return
         raw = event.message_str.split("cookie", 1)[-1].strip()
         if "=" not in raw:
             yield event.plain_result(
                 "用法：/dy cookie sessionid=xxx; ttwid=xxx; ...（在电脑浏览器登录抖音后，从开发者工具复制完整 Cookie）"
             )
             return
-        n = await self.client.import_cookies(raw)
-        ok = await self.client.is_logged_in()
+        try:
+            n = await self.client.import_cookies(raw)
+            ok = await self.client.is_logged_in()
+        except Exception as e:
+            yield event.plain_result(f"导入失败：{e}")
+            return
         yield event.plain_result(
             f"已导入 {n} 个 Cookie，{'登录成功 ✅' if ok else '但未检测到 sessionid，可能无效 ❌'}"
         )

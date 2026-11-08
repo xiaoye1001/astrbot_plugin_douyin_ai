@@ -128,22 +128,54 @@ def _version_key(v: str) -> tuple[int, ...]:
         return (0,)
 
 
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def extract_zip(zip_path: Path, dest: Path):
-    """Extract keeping executable bits and symlinks (zipfile drops both)."""
+    """Extract keeping executable bits and symlinks (zipfile drops both).
+
+    Every entry must stay inside ``dest``: "../", absolute paths and symlinks that
+    point (or lead) outside are rejected, so a tampered download can't overwrite
+    other files on the machine.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    root = dest.resolve()
     with zipfile.ZipFile(zip_path) as z:
         for info in z.infolist():
-            target = dest / info.filename
+            name = info.filename.replace("\\", "/")
+            parts = Path(name).parts
+            if name.startswith("/") or ".." in parts or (parts and ":" in parts[0]):
+                raise RuntimeError(f"压缩包里有不安全的路径：{info.filename}")
+            target = dest / name
             mode = info.external_attr >> 16
             if info.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
+                if not _inside(target.resolve(), root):
+                    raise RuntimeError(f"压缩包里有不安全的路径：{info.filename}")
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
+            # resolve() follows symlinks created by earlier entries
+            if not _inside(target.parent.resolve(), root):
+                raise RuntimeError(f"压缩包里有不安全的路径：{info.filename}")
             if stat.S_ISLNK(mode):
                 link = z.read(info).decode()
+                if Path(link).is_absolute() or not _inside(
+                    (target.parent / link).resolve(), root
+                ):
+                    raise RuntimeError(
+                        f"压缩包里有不安全的链接：{info.filename} -> {link}"
+                    )
                 if target.is_symlink() or target.exists():
                     target.unlink()
                 os.symlink(link, target)
                 continue
+            if target.is_symlink():
+                target.unlink()  # never write through a link
             with z.open(info) as src, open(target, "wb") as out:
                 shutil.copyfileobj(src, out)
             if mode and os.name != "nt":

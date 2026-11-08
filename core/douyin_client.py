@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import re
 import shutil
 import time
 from collections.abc import Callable
@@ -163,6 +164,7 @@ class DouyinClient:
         self._last_fail_at = 0.0
         self._browser_cache = self.data_dir / "browser.json"
         self.lock = asyncio.Lock()  # 同一时间只做一件事
+        self._start_lock = asyncio.Lock()  # only one browser launch at a time
         self.self_uid: str = ""
         self.self_sec_uid: str = ""
         self.self_nickname: str = ""
@@ -202,6 +204,11 @@ class DouyinClient:
     async def start(self):
         if self._ctx:
             return
+        async with self._start_lock:
+            if not self._ctx:  # another caller may have started it meanwhile
+                await self._start()
+
+    async def _start(self):
         if self._install_task and not self._install_task.done():
             raise DouyinError(
                 f"正在自动准备浏览器：{self.install_status}（第一次使用需要几分钟），请稍后再试"
@@ -534,7 +541,11 @@ class DouyinClient:
         video = Video.from_json(info) if info else None
         return page, video, comments
 
-    async def _type_and_send(self, page, scope, text: str) -> dict:
+    async def _type_and_send(self, page, scope, text: str, reply_to: str = "") -> dict:
+        # A newline would press Enter and send a half-typed comment
+        text = re.sub(r"\s*[\r\n]+\s*", " ", text).strip()
+        if not text:
+            raise DouyinError("内容为空")
         editor = await self._find(scope, "editor", timeout=4000)
         if not editor:
             editor = await self._find(page, "editor", timeout=2000)
@@ -559,7 +570,17 @@ class DouyinClient:
             raise DouyinError(
                 f"抖音拒绝了这条评论: {data.get('status_msg') or data or resp.status}"
             )
-        return data.get("comment") or {}
+        posted = data.get("comment") or {}
+        got = str(posted.get("reply_id") or "0")
+        if reply_to and got not in (reply_to, "0"):
+            raise DouyinError(
+                f"回复发到了另一条评论下面（目标 {reply_to}，实际 {got}），请到抖音检查"
+            )
+        if reply_to and got == "0" and "reply_id" in posted:
+            raise DouyinError(
+                "回复被当成了普通评论发出，请到抖音检查，并调整「页面选择器」"
+            )
+        return posted
 
     async def post_comment(self, aweme_id: str, text: str, page=None) -> dict:
         own_page = page is None
@@ -601,7 +622,7 @@ class DouyinClient:
                 )
             await btn.click()
             await page.wait_for_timeout(800)
-            return await self._type_and_send(page, item, text)
+            return await self._type_and_send(page, item, text, reply_to=comment.cid)
         finally:
             if own_page:
                 await page.close()
@@ -613,6 +634,9 @@ class DouyinClient:
         for _ in range(6):
             for sel in self._sel("comment_item"):
                 loc = page.locator(sel).filter(has_text=snippet)
+                # Same text from different people is common ("哈哈哈"): also match the author
+                if comment.user:
+                    loc = loc.filter(has_text=comment.user)
                 if await loc.count():
                     return loc.first
             # 滚动评论区加载更多

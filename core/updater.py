@@ -15,13 +15,10 @@ PLUGIN_DIR = Path(__file__).resolve().parent.parent
 
 # Tried in order. raw.githubusercontent.com is often unreachable from mainland
 # China, so fall back to public mirrors.
-RAW_SOURCES = (
-    "https://raw.githubusercontent.com/{repo}/{branch}/{path}",
-    "https://ghfast.top/https://raw.githubusercontent.com/{repo}/{branch}/{path}",
-    "https://fastly.jsdelivr.net/gh/{repo}@{branch}/{path}",
-)
+RAW_URL = "https://raw.githubusercontent.com/{repo}/{branch}/{path}"
+CDN_URL = "https://fastly.jsdelivr.net/gh/{repo}@{branch}/{path}"
 
-# URL-prefix mirror passed to AstrBot's updater when downloading from GitHub fails.
+# Default URL-prefix mirror (configurable as `github_mirror`); "" disables it.
 DOWNLOAD_MIRROR = "https://ghfast.top"
 
 
@@ -63,11 +60,17 @@ def changelog_since(changelog: str, current: str) -> str:
     return "\n".join(out).strip()
 
 
-async def fetch_text(repo: str, path: str, branch: str = "main") -> str:
+async def fetch_text(
+    repo: str, path: str, branch: str = "main", mirror: str = DOWNLOAD_MIRROR
+) -> str:
     """Fetch a file from the repo, trying each source until one works."""
+    sources = [RAW_URL]
+    if mirror:
+        sources.append(mirror.rstrip("/") + "/" + RAW_URL)
+    sources.append(CDN_URL)
     errors = []
     async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-        for tpl in RAW_SOURCES:
+        for tpl in sources:
             url = tpl.format(repo=repo, branch=branch, path=path)
             try:
                 resp = await client.get(url)
@@ -79,7 +82,7 @@ async def fetch_text(repo: str, path: str, branch: str = "main") -> str:
     raise RuntimeError("无法连接 GitHub 检查更新（" + "；".join(errors) + "）")
 
 
-async def check_latest() -> dict:
+async def check_latest(mirror: str = DOWNLOAD_MIRROR) -> dict:
     """Compare the local version with the one on GitHub.
 
     Returns:
@@ -88,13 +91,15 @@ async def check_latest() -> dict:
     local = read_metadata()
     current = local.get("version", "0.0.0")
     repo = repo_slug(local.get("repo", ""))
-    remote = read_metadata(await fetch_text(repo, "metadata.yaml"))
+    remote = read_metadata(await fetch_text(repo, "metadata.yaml", mirror=mirror))
     latest = remote.get("version", "0.0.0")
     has_update = parse_version(latest) > parse_version(current)
     notes = ""
     if has_update:
         try:
-            notes = changelog_since(await fetch_text(repo, "CHANGELOG.md"), current)
+            notes = changelog_since(
+                await fetch_text(repo, "CHANGELOG.md", mirror=mirror), current
+            )
         except RuntimeError:
             notes = ""
     return {

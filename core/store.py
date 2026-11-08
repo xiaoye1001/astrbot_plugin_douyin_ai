@@ -100,6 +100,9 @@ class Store:
     def list_pending(self) -> dict:
         return self.data["pending"]
 
+    def count_pending(self, kind: str) -> int:
+        return sum(1 for a in self.data["pending"].values() if a.get("type") == kind)
+
     def has_pending_for(self, key: str, value: str) -> bool:
         return any(a.get(key) == value for a in self.data["pending"].values())
 

@@ -59,7 +59,7 @@ async def test_check_latest(monkeypatch):
         "name: astrbot_plugin_douyin_ai\nversion: 99.0.0\nastrbot_version: '>=4.29.0'\n"
     )
 
-    async def fake_fetch(repo, path, branch="main"):
+    async def fake_fetch(repo, path, branch="main", mirror=""):
         assert repo == "xiaoye1001/astrbot_plugin_douyin_ai"
         return remote_meta if path == "metadata.yaml" else "## [99.0.0]\n- 很新\n"
 

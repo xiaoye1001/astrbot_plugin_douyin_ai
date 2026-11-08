@@ -38,19 +38,31 @@
         "description": "每轮刷视频的间隔（分钟）",
         "type": "int",
         "default": 60,
-        "slider": {"min": 10, "max": 360, "step": 5}
+        "slider": {
+          "min": 10,
+          "max": 360,
+          "step": 5
+        }
       },
       "videos_per_round": {
         "description": "每轮浏览的视频数",
         "type": "int",
         "default": 8,
-        "slider": {"min": 1, "max": 30, "step": 1}
+        "slider": {
+          "min": 1,
+          "max": 30,
+          "step": 1
+        }
       },
       "comment_probability": {
         "description": "对每个视频考虑评论的概率",
         "type": "float",
         "default": 0.3,
-        "slider": {"min": 0, "max": 1, "step": 0.05},
+        "slider": {
+          "min": 0,
+          "max": 1,
+          "step": 0.05
+        },
         "hint": "先按此概率挑选候选视频，再由 AI 判断是否值得评论"
       },
       "max_comments_per_day": {
@@ -71,7 +83,12 @@
       "skip_keywords": {
         "description": "视频描述包含这些词时不评论",
         "type": "list",
-        "default": ["广告", "抽奖", "带货", "直播间"]
+        "default": [
+          "广告",
+          "抽奖",
+          "带货",
+          "直播间"
+        ]
       }
     }
   },
@@ -88,7 +105,11 @@
         "description": "检查新评论的间隔（分钟）",
         "type": "int",
         "default": 30,
-        "slider": {"min": 5, "max": 360, "step": 5}
+        "slider": {
+          "min": 5,
+          "max": 360,
+          "step": 5
+        }
       },
       "recent_videos": {
         "description": "检查最近多少个作品",
@@ -135,6 +156,12 @@
     "type": "string",
     "default": "",
     "hint": "一般留空：插件会自动使用电脑上已有的 Chrome / Edge / Chromium，没有时自动从国内镜像下载。只有自动方式都失败时才需要填写，例如 C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe 或 /usr/bin/chromium"
+  },
+  "github_mirror": {
+    "description": "更新加速镜像（可选）",
+    "type": "string",
+    "default": "https://ghfast.top",
+    "hint": "连不上 GitHub 时，通过这个镜像检查和下载插件更新。镜像由第三方提供，理论上能篡改下载的代码；如果你的服务器能直连 GitHub，清空这一项会更安全。"
   },
   "selectors": {
     "description": "页面选择器（高级）",
