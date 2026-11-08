@@ -2,6 +2,11 @@
 
 本项目的所有重要变更都记录在这里。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.1] - 2026-11-08
+
+### 修复
+- 管理页面里「立即更新」「全部放弃」「退出登录」点了没反应：AstrBot 的插件页面不允许浏览器弹窗，改为页面内的确认对话框。
+
 ## [0.3.0] - 2026-11-08
 
 ### 新增
@@ -34,6 +39,7 @@
 - 人工审核模式、每日上限、发言间隔、活跃时间段。
 - `/dy` 系列管理指令。
 
+[0.3.1]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/compare/v0.1.0...v0.2.0

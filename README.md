@@ -170,7 +170,7 @@ ruff check . && ruff format --check .
 3. 打标签并推送，GitHub Actions 会自动创建 Release：
 
 ```bash
-git tag v0.3.0 && git push origin v0.3.0
+git tag v0.3.1 && git push origin v0.3.1
 ```
 
 推送到 `main` 后，已安装插件的用户就能在管理页面看到更新提示。

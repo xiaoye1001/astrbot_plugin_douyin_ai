@@ -51,6 +51,28 @@ function toast(msg, isError = false) {
   toastTimer = setTimeout(() => t.classList.add("hidden"), isError ? 5000 : 2800);
 }
 
+// window.confirm() is blocked inside AstrBot's sandboxed plugin iframe, so use our own dialog
+function askConfirm(message, okText = "确定", danger = false) {
+  return new Promise((resolve) => {
+    const dlg = $("confirm");
+    $("confirm-text").textContent = message;
+    const ok = $("confirm-ok");
+    ok.textContent = okText;
+    ok.className = "btn " + (danger ? "stop" : "primary");
+    dlg.classList.remove("hidden");
+    ok.focus();
+    const done = (v) => {
+      dlg.classList.add("hidden");
+      ok.onclick = $("confirm-cancel").onclick = dlg.onclick = document.onkeydown = null;
+      resolve(v);
+    };
+    ok.onclick = () => done(true);
+    $("confirm-cancel").onclick = () => done(false);
+    dlg.onclick = (e) => e.target === dlg && done(false);
+    document.onkeydown = (e) => e.key === "Escape" && done(false);
+  });
+}
+
 async function call(endpoint, body, button) {
   if (button) button.disabled = true;
   try {
@@ -323,14 +345,18 @@ $("btn-toggle").addEventListener("click", (e) =>
 $("btn-browse").addEventListener("click", (e) => call("control", { action: "browse" }, e.currentTarget));
 $("btn-reply").addEventListener("click", (e) => call("control", { action: "reply" }, e.currentTarget));
 $("quick-review").addEventListener("change", (e) => call("settings", { review_mode: e.target.checked }));
-$("btn-reject-all").addEventListener("click", (e) => {
-  if (confirm(`确定放弃全部 ${state.pending.length} 条待审核内容吗？`)) call("pending/reject", { id: "all" }, e.currentTarget);
+$("btn-reject-all").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  if (await askConfirm(`确定放弃全部 ${state.pending.length} 条待审核内容吗？`, "全部放弃", true))
+    call("pending/reject", { id: "all" }, btn);
 });
 $("btn-update-check").addEventListener("click", (e) => call("update/check", {}, e.currentTarget));
 for (const id of ["btn-update-run", "btn-update-banner"]) {
-  $(id).addEventListener("click", (e) => {
+  $(id).addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
     const u = state.update;
-    if (confirm(`更新到 v${u.latest}？更新期间插件会重载，大约需要几十秒。`)) call("update/run", {}, e.currentTarget);
+    if (await askConfirm(`更新到 v${u.latest}？更新期间插件会重载，大约需要几十秒。`, "立即更新"))
+      call("update/run", {}, btn);
   });
 }
 $("btn-login").addEventListener("click", (e) => call("login/start", {}, e.currentTarget));
@@ -340,8 +366,10 @@ $("btn-cookie").addEventListener("click", async (e) => {
   const res = await call("login/cookie", { cookie }, e.currentTarget);
   if (res) $("cookie-input").value = "";
 });
-$("btn-logout").addEventListener("click", (e) => {
-  if (confirm("退出后需要重新扫码登录，自动运行也会停止。确定退出吗？")) call("login/logout", {}, e.currentTarget);
+$("btn-logout").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  if (await askConfirm("退出后需要重新扫码登录，自动运行也会停止。确定退出吗？", "退出登录", true))
+    call("login/logout", {}, btn);
 });
 
 // ---------------------------------------------------------------- polling
