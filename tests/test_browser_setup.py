@@ -10,6 +10,7 @@ import os
 import socket
 import stat
 import threading
+import time
 import zipfile
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -41,6 +42,56 @@ def find_local_headless_shell() -> Path | None:
     return None
 
 
+class RangeHandler(SimpleHTTPRequestHandler):
+    """Static files with HTTP Range support and an optional per-connection
+    speed limit (like a CDN that throttles each connection)."""
+
+    ranges = True
+    bytes_per_sec = 0
+    seen_ranges: list = []
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        path = Path(self.translate_path(self.path))
+        if not path.is_file():
+            return self.send_error(404)
+        data = path.read_bytes()
+        rng = self.headers.get("Range") if self.ranges else None
+        if rng:
+            lo, hi = rng.split("=")[1].split("-")
+            lo, hi = int(lo), min(int(hi or len(data) - 1), len(data) - 1)
+            type(self).seen_ranges.append((lo, hi))
+            body = data[lo : hi + 1]
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {lo}-{hi}/{len(data)}")
+        else:
+            body = data
+            self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        step = 64 << 10
+        for i in range(0, len(body), step):
+            try:
+                self.wfile.write(body[i : i + step])
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            if self.bytes_per_sec:
+                time.sleep(step / self.bytes_per_sec)
+
+
+def serve(root: Path, handler=RangeHandler):
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", port), partial(handler, directory=str(root))
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{port}"
+
+
 @pytest.fixture
 def no_playwright_browser(tmp_path, monkeypatch):
     """Point Playwright at an empty browser dir so its bundled browser is 'missing'."""
@@ -69,15 +120,9 @@ def fake_mirror(tmp_path, monkeypatch):
         json.dumps([{"name": f"{version}/", "type": "dir"}])
     )
 
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    server = ThreadingHTTPServer(
-        ("127.0.0.1", port), partial(SimpleHTTPRequestHandler, directory=str(root))
-    )
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    monkeypatch.setattr(browser, "CFT_MIRROR", f"http://127.0.0.1:{port}/binaries")
-    monkeypatch.setattr(browser, "CFT_INDEX", f"http://127.0.0.1:{port}/index.json")
+    server, base = serve(root)
+    monkeypatch.setattr(browser, "CFT_MIRROR", f"{base}/binaries")
+    monkeypatch.setattr(browser, "CFT_INDEX", f"{base}/index.json")
     monkeypatch.setattr(browser, "playwright_chromium_version", lambda: "")
     yield
     server.shutdown()
@@ -166,3 +211,117 @@ async def test_clear_error_when_everything_fails(
     # repeated polling doesn't relaunch anything for a while
     with pytest.raises(dc.DouyinError):
         await c.start()
+
+
+# ---------------------------------------------------------------- speed-ups
+@pytest.fixture
+def blob(tmp_path):
+    data = os.urandom(12 << 20)  # 12 MB: big enough for parallel parts
+    (tmp_path / "srv").mkdir()
+    (tmp_path / "srv" / "f.bin").write_bytes(data)
+    return data
+
+
+async def _download(url, path, **kw):
+    import httpx
+
+    logs = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        t = time.monotonic()
+        await browser.fast_download(client, url, path, logs.append, "下载", **kw)
+        return time.monotonic() - t, logs
+
+
+async def test_parallel_download_is_correct_and_faster(tmp_path, blob, monkeypatch):
+    class Throttled(RangeHandler):
+        bytes_per_sec = 6 << 20  # 6 MB/s per connection
+        seen_ranges = []
+
+    server, base = serve(tmp_path / "srv", Throttled)
+    try:
+        t_one, _ = await _download(f"{base}/f.bin", tmp_path / "one.bin", parts=1)
+        t_many, logs = await _download(f"{base}/f.bin", tmp_path / "many.bin", parts=8)
+    finally:
+        server.shutdown()
+    assert (tmp_path / "one.bin").read_bytes() == blob
+    assert (tmp_path / "many.bin").read_bytes() == blob
+    assert len([r for r in Throttled.seen_ranges if r != (0, 0)]) == 8
+    assert t_many < t_one / 2, (t_one, t_many)
+    assert "100%" in logs[-1] and "MB/s" in logs[-1]
+
+
+async def test_download_falls_back_when_range_unsupported(tmp_path, blob):
+    class NoRange(RangeHandler):
+        ranges = False
+
+    server, base = serve(tmp_path / "srv", NoRange)
+    try:
+        await _download(f"{base}/f.bin", tmp_path / "out.bin")
+    finally:
+        server.shutdown()
+    assert (tmp_path / "out.bin").read_bytes() == blob
+
+
+async def test_download_404(tmp_path, blob):
+    server, base = serve(tmp_path / "srv")
+    try:
+        with pytest.raises(browser._NotFound):
+            await _download(f"{base}/missing.bin", tmp_path / "x.bin")
+    finally:
+        server.shutdown()
+
+
+async def test_fastest_mirror_picks_quickest(tmp_path):
+    release = "dists/bookworm/Release"
+    for name in ("slow", "fast"):
+        (tmp_path / name / "dists/bookworm").mkdir(parents=True)
+        (tmp_path / name / release).write_bytes(os.urandom(300 << 10))
+
+    class Slow(RangeHandler):
+        bytes_per_sec = 200 << 10
+
+    s1, slow = serve(tmp_path / "slow", Slow)
+    s2, fast = serve(tmp_path / "fast")
+    try:
+        mirrors = [
+            ("慢", slow, slow),
+            ("挂了", "http://127.0.0.1:9", "http://127.0.0.1:9"),
+            ("快", fast, fast),
+        ]
+        best = await browser.fastest_mirror("bookworm", mirrors)
+    finally:
+        s1.shutdown()
+        s2.shutdown()
+    assert best[0] == "快"
+
+
+async def test_apt_uses_temporary_sources_list(tmp_path, monkeypatch):
+    calls = []
+
+    async def fake_run(*cmd, env=None, timeout=900):
+        calls.append(cmd)
+        return 0, ""
+
+    async def fake_fastest(codename, mirrors=None):
+        return (
+            "阿里云",
+            "https://mirrors.aliyun.com/debian",
+            "https://mirrors.aliyun.com/debian-security",
+        )
+
+    monkeypatch.setattr(browser, "_run", fake_run)
+    monkeypatch.setattr(browser, "debian_codename", lambda: "bookworm")
+    monkeypatch.setattr(browser, "fastest_mirror", fake_fastest)
+    await browser.apt_install_fast(["chromium"], tmp_path / "apt", lambda m: None)
+
+    sources = (tmp_path / "apt" / "sources.list").read_text()
+    assert "deb https://mirrors.aliyun.com/debian bookworm main" in sources
+    assert (
+        "deb https://mirrors.aliyun.com/debian-security bookworm-security main"
+        in sources
+    )
+    update, install = calls
+    assert f"Dir::Etc::SourceList={tmp_path / 'apt' / 'sources.list'}" in update
+    assert "update" in update and "--error-on=any" in update
+    assert install[-1] == "chromium"
+    assert not any("/etc/apt" in part for part in update + install)

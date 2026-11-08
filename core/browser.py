@@ -5,7 +5,8 @@ plugin tries, in order:
 
 1. a browser already on the machine (Chrome / Edge / Chromium) - no download
 2. Chrome for Testing from the npmmirror CDN (fast in China)
-3. the system package manager (``apt-get install chromium``) on Linux as root
+3. the system package manager (``apt-get install chromium``) on Linux as root,
+   using the fastest of several domestic Debian mirrors
 4. ``playwright install chromium`` (official CDN, then npmmirror)
 """
 
@@ -15,9 +16,11 @@ import asyncio
 import json
 import os
 import platform
+import re
 import shutil
 import stat
 import sys
+import time
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -182,6 +185,111 @@ def extract_zip(zip_path: Path, dest: Path):
                 os.chmod(target, stat.S_IMODE(mode) | stat.S_IRUSR)
 
 
+class _NotFound(Exception):
+    pass
+
+
+def _fmt_size(n: float) -> str:
+    return f"{n / 1048576:.1f} MB"
+
+
+async def fast_download(
+    client: httpx.AsyncClient,
+    url: str,
+    path: Path,
+    log: Log,
+    label: str,
+    parts: int = 8,
+) -> None:
+    """Download ``url`` to ``path`` using several parallel Range requests.
+
+    CDNs often throttle each connection, so N connections are usually much
+    faster than one. Falls back to a single stream if Range isn't supported.
+    Raises _NotFound on HTTP 404.
+    """
+    # Ask for 1 byte to learn the size; stream so a server that ignores Range
+    # doesn't push the whole file into memory here.
+    async with client.stream("GET", url, headers={"Range": "bytes=0-0"}) as head:
+        status, headers = head.status_code, head.headers
+        if status == 404:
+            raise _NotFound(url)
+        if status not in (200, 206):
+            raise httpx.HTTPStatusError(
+                f"HTTP {status}", request=head.request, response=head
+            )
+    total = 0
+    if status == 206:
+        m = re.search(r"/(\d+)$", headers.get("content-range", ""))
+        total = int(m.group(1)) if m else 0
+
+    done = 0
+    started = time.monotonic()
+    last_report = 0.0
+
+    def report(final: bool = False):
+        nonlocal last_report
+        now = time.monotonic()
+        if not final and now - last_report < 1.5:
+            return
+        last_report = now
+        speed = done / max(now - started, 0.001)
+        if total:
+            log(
+                f"{label} {done * 100 // total}%（{_fmt_size(done)} / {_fmt_size(total)}，"
+                f"{_fmt_size(speed)}/s）"
+            )
+        else:
+            log(f"{label} {_fmt_size(done)}（{_fmt_size(speed)}/s）")
+
+    async def fetch(start: int | None, end: int | None, f):
+        nonlocal done
+        headers = {"Range": f"bytes={start}-{end}"} if start is not None else {}
+        for attempt in range(3):  # retry a dropped part, resuming where it stopped
+            try:
+                async with client.stream(
+                    "GET", url, headers=headers, timeout=None
+                ) as r:
+                    if r.status_code not in (200, 206):
+                        raise httpx.HTTPStatusError(
+                            f"HTTP {r.status_code}", request=r.request, response=r
+                        )
+                    async for chunk in r.aiter_bytes(1 << 18):
+                        f.write(chunk)
+                        done += len(chunk)
+                        if start is not None:
+                            start += len(chunk)
+                            headers["Range"] = f"bytes={start}-{end}"
+                        report()
+                return
+            except httpx.HTTPError:
+                if attempt == 2 or start is None:
+                    raise
+                await asyncio.sleep(1 + attempt)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if total < 8 << 20 or parts <= 1:
+        with open(path, "wb") as f:
+            await fetch(None, None, f)
+    else:
+        with open(path, "wb") as f:
+            f.truncate(total)
+        size = -(-total // parts)
+        files = [open(path, "r+b") for _ in range(parts)]  # noqa: SIM115
+        try:
+            jobs = []
+            for i, f in enumerate(files):
+                lo, hi = i * size, min(total, (i + 1) * size) - 1
+                f.seek(lo)
+                jobs.append(fetch(lo, hi, f))
+            await asyncio.gather(*jobs)
+        finally:
+            for f in files:
+                f.close()
+        if done != total:
+            raise httpx.HTTPError(f"下载不完整（{done}/{total} 字节）")
+    report(final=True)
+
+
 async def download_cft(dest: Path, headless_shell: bool, log: Log) -> str:
     """Download Chrome for Testing from the mirror. Returns the executable path."""
     plat = cft_platform()
@@ -206,24 +314,14 @@ async def download_cft(dest: Path, headless_shell: bool, log: Log) -> str:
             zip_path = dest / f"{kind}-{plat}-{ver}.zip"
             dest.mkdir(parents=True, exist_ok=True)
             try:
-                async with client.stream("GET", url, timeout=None) as r:
-                    if r.status_code != 200:
-                        last_err = f"{ver}: HTTP {r.status_code}"
-                        continue
-                    total = int(r.headers.get("content-length") or 0)
-                    done, shown = 0, -1
-                    with open(zip_path, "wb") as f:
-                        async for chunk in r.aiter_bytes(1 << 20):
-                            f.write(chunk)
-                            done += len(chunk)
-                            pct = done * 100 // total if total else -1
-                            if pct // 10 != shown // 10:
-                                shown = pct
-                                log(
-                                    f"正在从国内镜像下载浏览器 {ver}… {pct}%"
-                                    if pct >= 0
-                                    else "正在从国内镜像下载浏览器…"
-                                )
+                try:
+                    await fast_download(
+                        client, url, zip_path, log, f"正在从国内镜像下载浏览器 {ver}"
+                    )
+                except _NotFound:
+                    last_err = f"{ver}: HTTP 404"
+                    continue
+                log("下载完成，正在解压…")
                 root = dest / f"cft-{ver}"
                 shutil.rmtree(root, ignore_errors=True)
                 await asyncio.to_thread(extract_zip, zip_path, root)
@@ -231,7 +329,7 @@ async def download_cft(dest: Path, headless_shell: bool, log: Log) -> str:
                 if not exe.is_file():
                     raise RuntimeError(f"压缩包里没有找到 {exe.name}")
                 return str(exe)
-            except (httpx.HTTPError, OSError, zipfile.BadZipFile) as e:
+            except (httpx.HTTPError, OSError, zipfile.BadZipFile, RuntimeError) as e:
                 last_err = f"{ver}: {type(e).__name__} {e}"
             finally:
                 zip_path.unlink(missing_ok=True)
@@ -279,6 +377,104 @@ async def apt_install(packages: list[str], log: Log) -> None:
     )
     if code != 0:
         raise RuntimeError(f"apt-get install 失败：{out}")
+
+
+# (name, debian, debian-security). Probed for speed; only used for this one install.
+DEBIAN_MIRRORS = [
+    (
+        "阿里云",
+        "https://mirrors.aliyun.com/debian",
+        "https://mirrors.aliyun.com/debian-security",
+    ),
+    (
+        "清华",
+        "https://mirrors.tuna.tsinghua.edu.cn/debian",
+        "https://mirrors.tuna.tsinghua.edu.cn/debian-security",
+    ),
+    (
+        "中科大",
+        "https://mirrors.ustc.edu.cn/debian",
+        "https://mirrors.ustc.edu.cn/debian-security",
+    ),
+    (
+        "华为云",
+        "https://repo.huaweicloud.com/debian",
+        "https://repo.huaweicloud.com/debian-security",
+    ),
+    (
+        "Debian 官方",
+        "https://deb.debian.org/debian",
+        "https://security.debian.org/debian-security",
+    ),
+]
+
+
+def debian_codename() -> str:
+    """'bookworm' / 'trixie' on Debian (AstrBot's Docker image), else ''."""
+    try:
+        text = Path("/etc/os-release").read_text("utf-8")
+    except OSError:
+        return ""
+    info = dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+    clean = {k: v.strip().strip('"') for k, v in info.items()}
+    return clean.get("VERSION_CODENAME", "") if clean.get("ID") == "debian" else ""
+
+
+async def fastest_mirror(codename: str, mirrors=None) -> tuple[str, str, str] | None:
+    """Download each mirror's small Release file at once; return the quickest."""
+    mirrors = mirrors or DEBIAN_MIRRORS
+
+    async def probe(client, m):
+        t = time.monotonic()
+        r = await client.get(f"{m[1]}/dists/{codename}/Release")
+        r.raise_for_status()
+        return time.monotonic() - t, m
+
+    async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
+        results = await asyncio.gather(
+            *(probe(client, m) for m in mirrors), return_exceptions=True
+        )
+    ok = sorted(r for r in results if isinstance(r, tuple))
+    return ok[0][1] if ok else None
+
+
+async def apt_install_fast(packages: list[str], workdir: Path, log: Log) -> None:
+    """apt-get install using the fastest Debian mirror, without touching
+    /etc/apt (a temporary sources list is passed on the command line)."""
+    codename = debian_codename()
+    if not codename:
+        raise RuntimeError("不是 Debian 系统")
+    log("正在测速国内软件源…")
+    best = await fastest_mirror(codename)
+    if not best:
+        raise RuntimeError("所有软件源都连不上")
+    name, main, security = best
+    workdir.mkdir(parents=True, exist_ok=True)
+    (workdir / "parts").mkdir(exist_ok=True)
+    sources = workdir / "sources.list"
+    sources.write_text(
+        f"deb {main} {codename} main\n"
+        f"deb {main} {codename}-updates main\n"
+        f"deb {security} {codename}-security main\n",
+        "utf-8",
+    )
+    opts = [
+        "-o", f"Dir::Etc::SourceList={sources}",
+        "-o", f"Dir::Etc::SourceParts={workdir / 'parts'}",
+        "-o", "Acquire::Retries=3",
+    ]  # fmt: skip
+    env = {"DEBIAN_FRONTEND": "noninteractive"}
+    log(f"正在从{name}软件源更新列表…")
+    # --error-on=any: fail here if the mirror is unreachable (apt ≥ 2.1, Debian 11+)
+    code, out = await _run("apt-get", *opts, "update", "--error-on=any", env=env)
+    if code != 0:
+        raise RuntimeError(f"{name}软件源更新失败：{out}")
+    log(f"正在从{name}软件源安装 {' '.join(packages)}（含所需系统组件）…")
+    code, out = await _run(
+        "apt-get", *opts, "install", "-y", "--no-install-recommends", *packages, env=env
+    )
+    if code != 0:
+        raise RuntimeError(f"{name}软件源安装失败：{out}")
 
 
 async def install_playwright_deps(log: Log) -> None:

@@ -2,6 +2,14 @@
 
 本项目的所有重要变更都记录在这里。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.2] - 2026-11-08
+
+### 改进
+- 浏览器下载提速：
+  - Docker / Debian 下优先用系统软件源一次装好 Chromium 和它需要的系统组件，并自动测速阿里云、清华、中科大、华为云和 Debian 官方源，选最快的那个（只用于这次安装，不改动系统的软件源配置）。
+  - 从国内镜像下载 Chrome 时同时开 8 个连接分段下载，单个连接被限速时快很多；断线的分段会自动续传。
+  - 管理页面显示下载进度和速度，例如“45%（52.3 MB / 115.8 MB，6.1 MB/s）”。
+
 ## [0.4.1] - 2026-11-08
 
 ### 安全
@@ -67,6 +75,7 @@
 - 人工审核模式、每日上限、发言间隔、活跃时间段。
 - `/dy` 系列管理指令。
 
+[0.4.2]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.2
 [0.4.1]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.1
 [0.4.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.0
 [0.3.1]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.3.1

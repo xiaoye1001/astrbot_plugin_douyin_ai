@@ -286,21 +286,29 @@ class DouyinClient:
     async def _prepare_browser(self):
         """Get a working browser: mirror download, apt, then Playwright's installer."""
         steps = []
-        if browser.cft_platform():
-            steps.append(
-                (
-                    "国内镜像",
-                    lambda: browser.download_cft(
-                        self.data_dir / "browser", self.headless, self._set_status
-                    ),
+        workdir = self.data_dir / "browser"
+        apt_ok = browser.can_use_apt()
+
+        async def apt_chromium():
+            try:
+                await browser.apt_install_fast(
+                    ["chromium"], workdir / "apt", self._set_status
                 )
-            )
-        if browser.can_use_apt():
-
-            async def apt_chromium():
+            except Exception as e:
+                logger.warning(f"[douyin] 国内软件源安装失败，改用系统默认源: {e}")
                 await browser.apt_install(["chromium"], self._set_status)
-                return shutil.which("chromium") or shutil.which("chromium-browser")
+            return shutil.which("chromium") or shutil.which("chromium-browser")
 
+        def cft():
+            return browser.download_cft(workdir, self.headless, self._set_status)
+
+        # Debian (AstrBot's Docker image): one apt install brings the browser and
+        # every system library it needs, and domestic apt mirrors are fast.
+        if apt_ok and browser.debian_codename():
+            steps.append(("系统软件源", apt_chromium))
+        if browser.cft_platform():
+            steps.append(("国内镜像", cft))
+        if apt_ok and not browser.debian_codename():
             steps.append(("系统软件源", apt_chromium))
 
         async def pw_install():
