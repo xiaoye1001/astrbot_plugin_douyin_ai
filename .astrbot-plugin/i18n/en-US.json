@@ -1,4 +1,9 @@
 {
+  "metadata": {
+    "display_name": "Douyin AI Assistant",
+    "short_desc": "Let AI browse Douyin, comment and reply to comments",
+    "desc": "Logs in to your Douyin (Chinese TikTok) account and lets the AI browse the recommended feed, comment in your persona and reply to comments on your own videos. Includes a review queue (on by default), daily limits, active hours, a dashboard page and one-click updates."
+  },
   "views": {
     "dashboard": {
       "title": "Douyin AI",
