@@ -1,0 +1,181 @@
+{
+  "provider_id": {
+    "description": "用于生成评论的大模型",
+    "type": "string",
+    "default": "",
+    "hint": "留空则使用 AstrBot 当前默认的聊天模型",
+    "_special": "select_provider"
+  },
+  "persona": {
+    "description": "AI 的人设",
+    "type": "text",
+    "default": "你是一个热爱生活、说话风趣但真诚的年轻人。评论简短自然（一般 5~30 个字），像真人一样口语化，可以偶尔用一个表情，不要用书面腔，不要每句都夸，不要带话题标签，不要提及自己是 AI 以外的虚假身份。",
+    "hint": "决定 AI 评论和回复的说话风格"
+  },
+  "review_mode": {
+    "description": "人工审核模式",
+    "type": "bool",
+    "default": true,
+    "obvious_hint": true,
+    "hint": "开启后，AI 生成的评论/回复不会直接发出，而是先推送到绑定的会话，等你用 /dy ok <编号> 确认后才发送。强烈建议开启一段时间，确认效果后再关闭。"
+  },
+  "auto_run": {
+    "description": "插件加载后自动开始运行",
+    "type": "bool",
+    "default": false,
+    "hint": "关闭时需要手动发送 /dy start"
+  },
+  "browse": {
+    "description": "刷视频与评论设置",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用自动刷视频",
+        "type": "bool",
+        "default": true
+      },
+      "interval_minutes": {
+        "description": "每轮刷视频的间隔（分钟）",
+        "type": "int",
+        "default": 60,
+        "slider": {"min": 10, "max": 360, "step": 5}
+      },
+      "videos_per_round": {
+        "description": "每轮浏览的视频数",
+        "type": "int",
+        "default": 8,
+        "slider": {"min": 1, "max": 30, "step": 1}
+      },
+      "comment_probability": {
+        "description": "对每个视频考虑评论的概率",
+        "type": "float",
+        "default": 0.3,
+        "slider": {"min": 0, "max": 1, "step": 0.05},
+        "hint": "先按此概率挑选候选视频，再由 AI 判断是否值得评论"
+      },
+      "max_comments_per_day": {
+        "description": "每天最多发表评论数",
+        "type": "int",
+        "default": 10
+      },
+      "watch_seconds_min": {
+        "description": "每个视频最短观看秒数",
+        "type": "int",
+        "default": 6
+      },
+      "watch_seconds_max": {
+        "description": "每个视频最长观看秒数",
+        "type": "int",
+        "default": 25
+      },
+      "skip_keywords": {
+        "description": "视频描述包含这些词时不评论",
+        "type": "list",
+        "default": ["广告", "抽奖", "带货", "直播间"]
+      }
+    }
+  },
+  "reply": {
+    "description": "回复我的作品评论",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用自动回复评论",
+        "type": "bool",
+        "default": true
+      },
+      "interval_minutes": {
+        "description": "检查新评论的间隔（分钟）",
+        "type": "int",
+        "default": 30,
+        "slider": {"min": 5, "max": 360, "step": 5}
+      },
+      "recent_videos": {
+        "description": "检查最近多少个作品",
+        "type": "int",
+        "default": 5
+      },
+      "max_replies_per_day": {
+        "description": "每天最多回复数",
+        "type": "int",
+        "default": 30
+      },
+      "ignore_keywords": {
+        "description": "评论包含这些词时不回复",
+        "type": "list",
+        "default": []
+      }
+    }
+  },
+  "active_hours": {
+    "description": "活跃时间段（24 小时制，如 9-23）",
+    "type": "string",
+    "default": "9-23",
+    "hint": "只在该时间段内自动运行，更像真人作息。留空表示全天。"
+  },
+  "min_action_gap_seconds": {
+    "description": "两次发言之间最少间隔（秒）",
+    "type": "int",
+    "default": 90
+  },
+  "signature": {
+    "description": "评论后缀",
+    "type": "string",
+    "default": "",
+    "hint": "可选，例如 \"（AI 代回）\"，会附加在每条 AI 发出的内容末尾"
+  },
+  "headless": {
+    "description": "无头模式运行浏览器",
+    "type": "bool",
+    "default": true,
+    "hint": "在有桌面的电脑上可以关闭，便于观察浏览器在做什么"
+  },
+  "browser_path": {
+    "description": "浏览器可执行文件路径（可选）",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用 playwright install chromium 安装的浏览器；也可以填本机 Chrome 的路径"
+  },
+  "selectors": {
+    "description": "页面选择器（高级）",
+    "type": "object",
+    "hint": "抖音网页改版导致找不到输入框时，可在这里修改。多个选择器用 || 分隔，按顺序尝试。",
+    "items": {
+      "comment_entry": {
+        "description": "评论输入框入口",
+        "type": "string",
+        "default": "[data-e2e=\"comment-input\"] || .comment-input-inner-container || text=留下你的精彩评论吧 || text=善语结善缘"
+      },
+      "editor": {
+        "description": "可输入的编辑区",
+        "type": "string",
+        "default": "[data-e2e=\"comment-input\"] [contenteditable=\"true\"] || .public-DraftEditor-content[contenteditable=\"true\"] || [contenteditable=\"true\"]"
+      },
+      "comment_icon": {
+        "description": "打开评论区的按钮",
+        "type": "string",
+        "default": "[data-e2e=\"feed-comment-icon\"] || [data-e2e=\"video-player-comment\"]"
+      },
+      "comment_item": {
+        "description": "单条评论容器",
+        "type": "string",
+        "default": "[data-e2e=\"comment-item\"] || .comment-item"
+      },
+      "reply_button": {
+        "description": "评论下的回复按钮",
+        "type": "string",
+        "default": "text=回复"
+      },
+      "login_button": {
+        "description": "登录按钮",
+        "type": "string",
+        "default": "button:has-text(\"登录\") || text=登录"
+      },
+      "qrcode": {
+        "description": "登录二维码",
+        "type": "string",
+        "default": "[data-e2e=\"qrcode-image\"] || img[aria-label=\"二维码\"] || #animate_qrcode_container img || .web-login-scan-code__content img"
+      }
+    }
+  }
+}
