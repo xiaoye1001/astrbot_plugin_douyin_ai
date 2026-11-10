@@ -181,6 +181,18 @@ function pendingCard(p) {
 
   const sendBtn = el("button", { class: "btn small primary" }, "发送");
   const rejectBtn = el("button", { class: "btn small ghost danger" }, "放弃");
+  const regenBtn = el("button", { class: "btn small ghost regen", title: "让 AI 换个说法重写" }, "🔄 换一条");
+  regenBtn.addEventListener("click", async () => {
+    regenBtn.textContent = "生成中…";
+    const res = await call("pending/regenerate", { id: p.id }, regenBtn);
+    regenBtn.textContent = "🔄 换一条";
+    if (res && res.text) {
+      p.text = res.text;
+      delete drafts[p.id];
+      textarea.value = res.text;
+      count.textContent = `${res.text.length} 字`;
+    }
+  });
   sendBtn.addEventListener("click", async () => {
     const text = textarea.value.trim();
     if (!text) return toast("内容不能为空", true);
@@ -201,7 +213,7 @@ function pendingCard(p) {
     ctx,
     el("div", { class: "ctx-label", style: "font-size:12px;margin-bottom:4px" }, "AI 想说："),
     textarea,
-    el("div", { class: "card-actions" }, count, rejectBtn, sendBtn));
+    el("div", { class: "card-actions" }, count, regenBtn, rejectBtn, sendBtn));
 }
 
 function renderEvents() {
@@ -212,7 +224,23 @@ function renderEvents() {
   list.classList.toggle("hidden", !state.events.length);
 }
 
+function renderChart() {
+  const days = state.daily || [];
+  const max = Math.max(1, ...days.map((d) => Math.max(d.comments, d.replies)));
+  const week = "日一二三四五六";
+  $("chart").replaceChildren(...days.map((d, i) => {
+    const bar = (n, cls) => el("i", { class: cls, style: `height:${Math.round((n / max) * 100)}%`, title: String(n) });
+    const date = new Date(d.date + "T00:00:00");
+    const isToday = i === days.length - 1;
+    return el("div", { class: "chart-col" + (isToday ? " today" : "") },
+      el("div", { class: "chart-num" }, `${d.comments} / ${d.replies}`),
+      el("div", { class: "chart-bars" }, bar(d.comments, "dot-c"), bar(d.replies, "dot-r")),
+      el("div", { class: "chart-day" }, isToday ? "今天" : `周${week[date.getDay()]}`));
+  }));
+}
+
 function renderHistory() {
+  renderChart();
   const list = $("history-list");
   list.replaceChildren(...state.history.map((h) =>
     el("li", {},
@@ -453,6 +481,47 @@ $("btn-reject-all").addEventListener("click", async (e) => {
   if (await askConfirm(`确定放弃全部 ${state.pending.length} 条待审核内容吗？`, "全部放弃", true))
     call("pending/reject", { id: "all" }, btn);
 });
+$("btn-try").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  const desc = $("try-desc").value.trim();
+  if (!desc) return toast("请先写一段视频文案", true);
+  const box = $("try-result");
+  btn.disabled = true;
+  btn.textContent = "AI 正在写…";
+  try {
+    const r = await bridge.apiPost("preview", { desc, persona: form.elements.persona.value });
+    box.className = "try-result" + (r.comment ? "" : " skip");
+    box.replaceChildren(
+      el("div", { class: "try-label" }, r.comment ? "AI 会这样评论：" : "AI 决定不评论"),
+      el("div", {}, r.comment ? r.text : r.reason || "（没有给出理由）"));
+  } catch (err) {
+    toast(err.message || String(err), true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "让 AI 写一条";
+  }
+});
+
+$("btn-diagnose").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  const list = $("diag-list");
+  btn.disabled = true;
+  btn.textContent = "检查中…（最多一分钟）";
+  try {
+    const r = await bridge.apiPost("diagnose", {});
+    list.replaceChildren(...r.checks.map((c) =>
+      el("li", { class: c.ok === false ? "bad" : "" },
+        el("span", { class: "diag-icon" }, c.ok === true ? "✅" : c.ok === false ? "❌" : "➖"),
+        el("span", { class: "diag-name" }, c.name),
+        el("span", { class: "diag-detail" }, c.detail))));
+  } catch (err) {
+    toast(err.message || String(err), true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "重新自检";
+  }
+});
+
 $("btn-update-check").addEventListener("click", (e) => call("update/check", {}, e.currentTarget));
 for (const id of ["btn-update-run", "btn-update-banner"]) {
   $(id).addEventListener("click", async (e) => {

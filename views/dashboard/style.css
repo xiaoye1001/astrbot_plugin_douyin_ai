@@ -187,6 +187,45 @@ legend { padding: 0 6px; font-weight: 600; }
 .qr-wrap img { width: 100%; height: 100%; object-fit: contain; }
 .qr-placeholder { color: #9aa1ad; font-size: 13px; padding: 20px; text-align: center; }
 
+/* ---------- 7-day chart ---------- */
+.chart-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px 10px; box-shadow: var(--shadow); margin-bottom: 12px; }
+.chart-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.chart-title { font-weight: 600; }
+.legend { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-left: 8px; }
+.dot-c { background: var(--accent); }
+.dot-r { background: var(--cyan); }
+.chart { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; align-items: end; }
+.chart-col { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.chart-bars { height: 90px; display: flex; align-items: flex-end; gap: 3px; }
+.chart-bars i { display: block; width: 12px; min-height: 2px; border-radius: 3px 3px 0 0; }
+.chart-num { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.chart-day { font-size: 11px; color: var(--muted); }
+.chart-col.today .chart-day { color: var(--text); font-weight: 600; }
+
+/* ---------- persona try-out ---------- */
+.try-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); margin-top: 12px; }
+.try-card h3 { margin: 0 0 4px; font-size: 15px; }
+.try-card p { margin: 0 0 10px; font-size: 13px; }
+.try-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.try-result { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--bg); word-break: break-word; }
+.try-result .try-label { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+.try-result.skip { color: var(--muted); }
+.card-actions .regen { margin-right: 4px; }
+
+/* ---------- diagnostics ---------- */
+.diag-card { margin-top: 12px; }
+.diag-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.diag-head h3 { margin: 0 0 2px; font-size: 15px; }
+.diag-head .muted { font-size: 13px; }
+.diag-list { list-style: none; margin: 0; padding: 0; }
+.diag-list li { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); }
+.diag-list li:first-child { margin-top: 12px; }
+.diag-icon { flex-shrink: 0; width: 20px; text-align: center; }
+.diag-name { font-weight: 600; min-width: 72px; flex-shrink: 0; }
+.diag-detail { color: var(--muted); word-break: break-word; }
+.diag-list li.bad .diag-detail { color: var(--red); }
+
 /* ---------- remote assist ---------- */
 .remote { margin-top: 16px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); }
 .remote-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }

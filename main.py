@@ -78,6 +78,9 @@ class DouyinAIPlugin(Star):
             ("login/input", self.web_login_input, ["POST"]),
             ("settings", self.web_settings, ["POST"]),
             ("update/check", self.web_update_check, ["POST"]),
+            ("pending/regenerate", self.web_regenerate, ["POST"]),
+            ("preview", self.web_preview, ["POST"]),
+            ("diagnose", self.web_diagnose, ["POST"]),
             ("update/run", self.web_update_run, ["POST"]),
         ]:
             context.register_web_api(
@@ -115,7 +118,7 @@ class DouyinAIPlugin(Star):
         except Exception as e:
             logger.warning(f"[douyin] 通知发送失败: {e}")
 
-    async def llm(self, prompt: str) -> str:
+    async def llm(self, prompt: str, persona: str | None = None) -> str:
         provider_id = self.config.get("provider_id") or ""
         if not provider_id:
             prov = await self.context.get_using_provider_async(
@@ -126,7 +129,9 @@ class DouyinAIPlugin(Star):
             provider_id = prov.meta().id
         resp = await self.context.llm_generate(
             chat_provider_id=provider_id,
-            system_prompt=self.config.get("persona", ""),
+            system_prompt=persona
+            if persona is not None
+            else self.config.get("persona", ""),
             prompt=prompt,
         )
         return resp.completion_text or ""
@@ -159,7 +164,13 @@ class DouyinAIPlugin(Star):
             await asyncio.sleep(wait + random.uniform(0, 15))
 
     # ================================================================ AI 决策
-    async def decide_comment(self, video: Video, comments: list[Comment]) -> dict:
+    async def decide_comment(
+        self,
+        video: Video,
+        comments: list[Comment],
+        extra: str = "",
+        persona: str | None = None,
+    ) -> dict:
         top = sorted(comments, key=lambda c: c.digg_count, reverse=True)[:8]
         prompt = COMMENT_PROMPT.format(
             author=quote(video.author, 40) or "未知",
@@ -168,16 +179,16 @@ class DouyinAIPlugin(Star):
             digg=video.digg_count,
             comments="\n".join(f"- {quote(c.text, 150)}" for c in top) or "（暂无）",
         )
-        return parse_json(await self.llm(prompt))
+        return parse_json(await self.llm(prompt + extra, persona))
 
-    async def decide_reply(self, desc: str, c: Comment) -> dict:
+    async def decide_reply(self, desc: str, c: Comment, extra: str = "") -> dict:
         prompt = REPLY_PROMPT.format(
             me=quote(self.client.self_nickname, 40) or "我",
             desc=quote(desc) or "（无文案）",
             user=quote(c.user, 40) or "网友",
             text=quote(c.text),
         )
-        return parse_json(await self.llm(prompt))
+        return parse_json(await self.llm(prompt + extra))
 
     # ================================================================ 执行动作
     async def _do_comment(self, aweme_id: str, text: str, page=None, desc: str = ""):
@@ -322,6 +333,7 @@ class DouyinAIPlugin(Star):
                                     "type": "reply",
                                     "aweme_id": post.aweme_id,
                                     "cid": c.cid,
+                                    "desc": post.desc[:80],
                                     "comment": asdict(c),
                                     "text": text,
                                 }
@@ -437,6 +449,88 @@ class DouyinAIPlugin(Star):
             self.store.save()
             raise
         return text
+
+    async def regenerate_pending(self, pid: str) -> str:
+        """Ask the AI for a different wording of a pending item."""
+        action = self.store.list_pending().get(str(pid))
+        if not action:
+            raise DouyinError(f"没有编号为 #{pid} 的待审核内容")
+        extra = (
+            f"\n（你上一次写的是「{quote(action['text'], 120)}」，"
+            "请换一个角度重新写一条，不要重复，仍然只输出 JSON。）"
+        )
+        if action["type"] == "comment":
+            video = Video(
+                action["aweme_id"], action.get("desc", ""), action.get("author", "")
+            )
+            text = self._ai_text(await self.decide_comment(video, [], extra), "comment")
+        else:
+            text = self._ai_text(
+                await self.decide_reply(
+                    action.get("desc", ""), Comment(**action["comment"]), extra
+                ),
+                "reply",
+            )
+        if not text:
+            raise DouyinError("AI 这次没有写出可用的内容，可以再试一次或手动修改")
+        # The item may have been sent / rejected while the AI was thinking
+        if str(pid) not in self.store.list_pending():
+            raise DouyinError(f"#{pid} 已经被处理了")
+        action["text"] = text
+        self.store.save()
+        return text
+
+    async def diagnose(self) -> list[dict]:
+        """Run quick health checks; each item: name, ok (True/False/None), detail."""
+        out = []
+
+        def add(name, ok, detail):
+            out.append({"name": name, "ok": ok, "detail": str(detail)[:300]})
+
+        logged = None
+        try:
+            logged = await self.client.is_logged_in()  # starts the browser
+            add("浏览器", True, "可以正常启动")
+        except Exception as e:
+            add("浏览器", False, e)
+        if logged is None:
+            add("抖音登录", None, "浏览器不可用，无法检查")
+        elif logged:
+            add("抖音登录", True, f"已登录 {self.client.self_nickname}".strip())
+        else:
+            add("抖音登录", False, "未登录，请到「账号」扫码登录")
+        try:
+            reply = await asyncio.wait_for(self.llm("请只回复两个字：正常"), 60)
+            add(
+                "AI 模型",
+                bool(reply.strip()),
+                f"模型回复：{reply.strip()[:40] or '（空）'}",
+            )
+        except asyncio.TimeoutError:
+            add("AI 模型", False, "60 秒内没有回复")
+        except Exception as e:
+            add("AI 模型", False, e)
+        if self.store.notify_umo:
+            add("消息通知", True, "已绑定会话，审核和提醒会发到聊天里")
+        else:
+            add(
+                "消息通知",
+                None,
+                "还没绑定会话（给机器人发 /dy bind）。不影响在本页面审核",
+            )
+        try:
+            info = await updater.check_latest(self._mirror())
+            add("更新检查", True, f"可以连接，最新版本 v{info['latest']}")
+        except Exception as e:
+            add("更新检查", False, e)
+        hours = self.config.get("active_hours", "")
+        add(
+            "自动运行",
+            True if self.loop_running else None,
+            ("运行中" if self.loop_running else "未开始")
+            + ("" if in_active_hours(hours) else f"，现在不在活跃时间段（{hours}）内"),
+        )
+        return out
 
     def reject_pending(self, pid: str) -> int:
         """放弃待审核内容，pid 为 "all" 时全部放弃。返回放弃的条数。"""
@@ -635,6 +729,7 @@ class DouyinAIPlugin(Star):
                     {"id": pid, **a} for pid, a in self.store.list_pending().items()
                 ],
                 "history": list(reversed(self.store.data["history"][-50:])),
+                "daily": self.store.last_days(7),
                 "events": list(reversed(self._events)),
                 "login": self._login,
                 "settings": {
@@ -684,6 +779,43 @@ class DouyinAIPlugin(Star):
             msg = (str(e).splitlines() or [type(e).__name__])[0]
             return error_response(f"发送失败：{msg}", status_code=400)
         return json_response({"message": f"已发送：{text}"})
+
+    async def web_regenerate(self):
+        pid = str((await request.json(default={})).get("id", ""))
+        try:
+            text = await self.regenerate_pending(pid)
+        except Exception as e:
+            msg = (str(e).splitlines() or [type(e).__name__])[0]
+            return error_response(f"重新生成失败：{msg}", status_code=400)
+        return json_response({"message": "已换一条", "text": text})
+
+    async def web_preview(self):
+        """Try the persona on a sample caption without touching Douyin."""
+        body = await request.json(default={})
+        desc = str(body.get("desc") or "").strip()[:300]
+        if not desc:
+            return error_response("请先填写一段视频文案", status_code=400)
+        persona = str(body.get("persona") or "")[:2000] or None
+        try:
+            d = await self.decide_comment(Video("preview", desc), [], persona=persona)
+        except Exception as e:
+            msg = (str(e).splitlines() or [type(e).__name__])[0]
+            return error_response(f"试写失败：{msg}", status_code=400)
+        raw = str(d.get("text") or "")
+        text = clean_output(raw) if d.get("comment") else ""
+        return json_response(
+            {
+                "comment": bool(text),
+                "text": text,
+                "reason": str(d.get("reason") or "")[:200]
+                or (
+                    "内容含链接/联系方式等，被安全过滤拦下" if raw and not text else ""
+                ),
+            }
+        )
+
+    async def web_diagnose(self):
+        return json_response({"checks": await self.diagnose()})
 
     async def web_reject(self):
         n = self.reject_pending(str((await request.json(default={})).get("id", "")))

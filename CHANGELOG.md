@@ -2,6 +2,17 @@
 
 本项目的所有重要变更都记录在这里。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] - 2026-11-10
+
+### 新增
+- 待审核内容新增「换一条」：对 AI 写的内容不满意时，让它换个角度重写，不用自己动手改。
+- 设置页新增「试一试人设」：随便写一段视频文案，马上看到 AI 会怎么评论。用的是输入框里还没保存的人设，不会发到抖音，方便反复调整。
+- 「已发送」页新增最近 7 天的评论 / 回复数量柱状图。
+- 「关于与更新」页新增「运行自检」：一键检查浏览器、抖音登录、AI 模型、消息通知、更新连接和自动运行状态，并指出哪一项有问题。
+
+### 修复
+- 待审核的回复没有显示对应的作品文案。
+
 ## [0.4.5] - 2026-11-08
 
 ### 新增
@@ -96,6 +107,7 @@
 - 人工审核模式、每日上限、发言间隔、活跃时间段。
 - `/dy` 系列管理指令。
 
+[0.5.0]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.5.0
 [0.4.5]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.5
 [0.4.4]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.4
 [0.4.3]: https://github.com/xiaoye1001/astrbot_plugin_douyin_ai/releases/tag/v0.4.3

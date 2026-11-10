@@ -77,6 +77,21 @@ class Store:
         d[kind] = d.get(kind, 0) + 1
         self.save()
 
+    def last_days(self, n: int) -> list[dict]:
+        """Counts for the last n days, oldest first (missing days are zero)."""
+        out = []
+        for i in range(n - 1, -1, -1):
+            day = _days_ago(i)
+            d = self.data["daily"].get(day, {})
+            out.append(
+                {
+                    "date": day,
+                    "comments": d.get("comments", 0),
+                    "replies": d.get("replies", 0),
+                }
+            )
+        return out
+
     def add_history(self, kind: str, target: str, text: str):
         self.data["history"].append(
             {"t": int(time.time()), "kind": kind, "target": target, "text": text}

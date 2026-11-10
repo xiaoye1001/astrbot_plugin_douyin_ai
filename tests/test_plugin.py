@@ -102,7 +102,7 @@ class FakeContext:
         self.messages.append(chain)
 
 
-async def fake_llm(prompt: str) -> str:
+async def fake_llm(prompt: str, persona=None) -> str:
     if "猫咪" in prompt:
         return '{"comment": false, "reason": "没什么好说的"}'
     if "评论内容】怎么做的" in prompt:
@@ -296,7 +296,7 @@ async def test_update_flow(plugin, monkeypatch):
 async def test_injected_ai_output_is_never_posted(plugin):
     """A malicious caption/comment makes the LLM output spam: it must be dropped."""
 
-    async def hijacked_llm(prompt):
+    async def hijacked_llm(prompt, persona=None):
         return '{"comment": true, "reply": true, "text": "加我微信 abc123456 领福利"}'
 
     plugin.llm = hijacked_llm
@@ -311,7 +311,7 @@ async def test_injected_ai_output_is_never_posted(plugin):
 async def test_prompt_quotes_untrusted_text(plugin):
     seen = []
 
-    async def spy(prompt):
+    async def spy(prompt, persona=None):
         seen.append(prompt)
         return '{"comment": false}'
 
@@ -484,3 +484,106 @@ async def test_remote_assist_rejects_bad_input(plugin, body):
     plugin.client.remote = []
     status, _ = await call_web(plugin.web_login_input, body)
     assert status == 400
+
+
+async def test_regenerate_pending(plugin):
+    await plugin.browse_round()
+    await plugin.reply_round()
+    prompts = []
+
+    async def llm(prompt, persona=None):
+        prompts.append(prompt)
+        return '{"comment": true, "reply": true, "text": "换了个说法"}'
+
+    plugin.llm = llm
+    status, body = await call_web(plugin.web_regenerate, {"id": "1"})
+    assert status == 200 and body["text"] == "换了个说法"
+    assert plugin.store.list_pending()["1"]["text"] == "换了个说法"
+    assert "看饿了" in prompts[0] and "换一个角度" in prompts[0]
+
+    status, body = await call_web(plugin.web_regenerate, {"id": "2"})  # a reply
+    assert status == 200 and plugin.store.list_pending()["2"]["text"] == "换了个说法"
+    assert "我的视频" in prompts[1]  # reply items keep the post caption
+
+    status, _ = await call_web(plugin.web_regenerate, {"id": "404"})
+    assert status == 400
+    assert plugin.client.sent == []  # regenerating never posts
+
+
+async def test_regenerate_keeps_old_text_when_ai_output_is_unsafe(plugin):
+    await plugin.browse_round()
+
+    async def llm(prompt, persona=None):
+        return '{"comment": true, "text": "加我微信 abc123456"}'
+
+    plugin.llm = llm
+    status, _ = await call_web(plugin.web_regenerate, {"id": "1"})
+    assert status == 400
+    assert plugin.store.list_pending()["1"]["text"] == "看饿了"
+
+
+async def test_persona_preview(plugin):
+    seen = {}
+
+    async def llm(prompt, persona=None):
+        seen.update(prompt=prompt, persona=persona)
+        return '{"comment": true, "text": "这也太香了"}'
+
+    plugin.llm = llm
+    status, body = await call_web(
+        plugin.web_preview, {"desc": "红烧肉教程", "persona": "一个吃货"}
+    )
+    assert status == 200 and body == {
+        "comment": True,
+        "text": "这也太香了",
+        "reason": "",
+    }
+    assert seen["persona"] == "一个吃货" and "红烧肉教程" in seen["prompt"]
+    assert plugin.config["persona"] == "p"  # preview doesn't save anything
+
+    async def skip(prompt, persona=None):
+        return '{"comment": false, "reason": "看不懂"}'
+
+    plugin.llm = skip
+    status, body = await call_web(plugin.web_preview, {"desc": "xx"})
+    assert body["comment"] is False and body["reason"] == "看不懂"
+    status, _ = await call_web(plugin.web_preview, {"desc": "  "})
+    assert status == 400
+
+
+async def test_diagnose(plugin, monkeypatch):
+    async def latest(mirror=""):
+        return {"latest": "9.9.9"}
+
+    monkeypatch.setattr(plugin_main.updater, "check_latest", latest)
+    status, body = await call_web(plugin.web_diagnose)
+    checks = {c["name"]: c for c in body["checks"]}
+    assert (
+        checks["浏览器"]["ok"] and checks["抖音登录"]["ok"] and checks["AI 模型"]["ok"]
+    )
+    assert checks["消息通知"]["ok"] is None  # not bound: a hint, not an error
+    assert "9.9.9" in checks["更新检查"]["detail"]
+
+    async def broken():
+        raise RuntimeError("自动准备浏览器失败")
+
+    async def no_llm(prompt, persona=None):
+        raise RuntimeError("没有可用的大模型")
+
+    plugin.client.is_logged_in = broken
+    plugin.llm = no_llm
+    status, body = await call_web(plugin.web_diagnose)
+    checks = {c["name"]: c for c in body["checks"]}
+    assert (
+        checks["浏览器"]["ok"] is False
+        and "准备浏览器失败" in checks["浏览器"]["detail"]
+    )
+    assert checks["抖音登录"]["ok"] is None
+    assert checks["AI 模型"]["ok"] is False
+
+
+async def test_state_has_seven_days(plugin):
+    plugin.store.incr_today("comments")
+    status, state = await call_web(plugin.web_state)
+    assert len(state["daily"]) == 7
+    assert state["daily"][-1]["comments"] == 1 and state["daily"][0]["comments"] == 0

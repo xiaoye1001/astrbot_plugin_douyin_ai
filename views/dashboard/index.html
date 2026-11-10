@@ -97,6 +97,13 @@
 
       <!-- 已发送 -->
       <section class="panel hidden" data-panel="history">
+        <div class="chart-card">
+          <div class="chart-head">
+            <span class="chart-title">最近 7 天</span>
+            <span class="legend"><i class="dot-c"></i>评论 <i class="dot-r"></i>回复</span>
+          </div>
+          <div class="chart" id="chart"></div>
+        </div>
         <ul class="history" id="history-list"></ul>
         <div class="empty hidden" id="history-empty"><div class="empty-icon">📝</div><div>还没有发过内容</div></div>
       </section>
@@ -147,6 +154,19 @@
           </div>
           <p class="muted small-note">选择模型、页面选择器等高级选项，请在插件的「配置」里修改。</p>
         </form>
+      </section>
+
+      <!-- 试一试人设（在设置面板里，表单之外，不影响保存） -->
+      <section class="panel hidden" data-panel="settings">
+        <div class="try-card">
+          <h3>试一试人设</h3>
+          <p class="muted">随便写一段视频文案，看看 AI 会怎么评论。用的是上面输入框里的人设（不用先保存），不会真的发到抖音。</p>
+          <textarea id="try-desc" rows="2" maxlength="300" placeholder="例如：在家复刻米其林红烧肉，一次成功！"></textarea>
+          <div class="try-actions">
+            <button type="button" class="btn" id="btn-try">让 AI 写一条</button>
+          </div>
+          <div class="try-result hidden" id="try-result"></div>
+        </div>
       </section>
 
       <!-- 账号 -->
@@ -223,6 +243,16 @@
           <p class="muted small-note">
             项目主页：<a id="u-repo" target="_blank" rel="noopener"></a>
           </p>
+        </div>
+        <div class="about-card diag-card">
+          <div class="diag-head">
+            <div>
+              <h3>运行自检</h3>
+              <span class="muted">不工作的时候点一下，逐项检查浏览器、登录、AI 模型和网络</span>
+            </div>
+            <button class="btn" id="btn-diagnose">开始自检</button>
+          </div>
+          <ul class="diag-list" id="diag-list"></ul>
         </div>
       </section>
     </div>
